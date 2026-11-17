@@ -1,15 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import {
   Award,
-  Bell,
-  BellRing,
   Check,
   ExternalLink,
   GitCompare,
   PlayCircle,
   Scale,
   Search,
-  TrendingDown,
   X,
 } from 'lucide-react';
 import {
@@ -26,22 +23,20 @@ interface DiamondDetailModalProps {
   diamond: Diamond | null;
   initialTab?: 'photo' | 'video' | 'cert';
   isCompared: boolean;
-  isWatched: boolean;
+  isWatched?: boolean;
   onClose: () => void;
   onToggleCompare: (diamondId: string) => void;
   onFindPair: (diamond: Diamond) => void;
-  onToggleWatch: (diamond: Diamond) => void;
+  onToggleWatch?: (diamond: Diamond) => void;
 }
 
 export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
   diamond,
   initialTab = 'photo',
   isCompared,
-  isWatched,
   onClose,
   onToggleCompare,
   onFindPair,
-  onToggleWatch,
 }) => {
   const [activeTab, setActiveTab] = useState<'photo' | 'video' | 'cert'>(initialTab);
   const [loupeEnabled, setLoupeEnabled] = useState(false);
@@ -66,14 +61,6 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
   if (!diamond) return null;
 
   const pricePerCarat = Math.round(diamond.priceUsd / diamond.carat);
-  const dropPercent =
-    diamond.previousPriceUsd && diamond.previousPriceUsd > diamond.priceUsd
-      ? Math.round(
-          ((diamond.previousPriceUsd - diamond.priceUsd) /
-            diamond.previousPriceUsd) *
-            1000
-        ) / 10
-      : null;
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!loupeEnabled) return;
@@ -343,15 +330,6 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                     {formatStonePrice(pricePerCarat, diamond.currency)} / ct
                   </span>
                 </div>
-                {dropPercent !== null && diamond.previousPriceUsd && (
-                  <div className="mt-1.5 flex items-center gap-2 text-xs text-[#0F5132] font-medium">
-                    <TrendingDown className="w-4 h-4" />
-                    <span>
-                      Цена снижена на {dropPercent}% (ранее{' '}
-                      {formatStonePrice(diamond.previousPriceUsd, diamond.currency)})
-                    </span>
-                  </div>
-                )}
               </div>
 
               {/* 4Cs & Optical Specs */}
@@ -379,6 +357,13 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                     )}
                     <span>{diamond.color}</span>
                   </dd>
+                  {(diamond.fancyIntensity || diamond.fancyOvertone) && (
+                    <div className="text-[11px] text-[#5A606D] mt-0.5">
+                      {[diamond.fancyIntensity, diamond.fancyOvertone]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </div>
+                  )}
                 </div>
                 <div className="border-b border-[#F1F3F5] pb-2">
                   <dt className="text-xs text-[#5A606D]">Чистота</dt>
@@ -474,28 +459,6 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                   Подобрать пару
                 </button>
               </div>
-
-              <button
-                type="button"
-                onClick={() => onToggleWatch(diamond)}
-                className={`w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-medium rounded-lg border transition-colors ${
-                  isWatched
-                    ? 'bg-[#EEF2F7] border-[#1B365D] text-[#1B365D]'
-                    : 'bg-white border-[#D5D9E0] text-[#111317] hover:bg-[#F7F8FA]'
-                }`}
-              >
-                {isWatched ? (
-                  <>
-                    <BellRing className="w-4 h-4" />
-                    Уведомление о снижении цены активно
-                  </>
-                ) : (
-                  <>
-                    <Bell className="w-4 h-4" />
-                    Уведомлять при снижении цены на этот камень
-                  </>
-                )}
-              </button>
             </div>
           </div>
         </div>

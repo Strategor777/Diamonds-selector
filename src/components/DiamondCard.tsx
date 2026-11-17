@@ -1,7 +1,5 @@
 import React, { useState } from 'react';
 import {
-  Bell,
-  BellRing,
   Camera,
   Check,
   ExternalLink,
@@ -9,7 +7,6 @@ import {
   Maximize2,
   PlayCircle,
   Scale,
-  TrendingDown,
 } from 'lucide-react';
 import {
   SHAPE_SHORT_RU,
@@ -23,33 +20,22 @@ import { DiamondTurntable360 } from './DiamondTurntable360';
 interface DiamondCardProps {
   diamond: Diamond;
   isCompared: boolean;
-  isWatched: boolean;
+  isWatched?: boolean;
   onInspect: (diamond: Diamond, initialTab?: 'photo' | 'video' | 'cert') => void;
   onToggleCompare: (diamondId: string) => void;
   onFindPair: (diamond: Diamond) => void;
-  onToggleWatch: (diamond: Diamond) => void;
+  onToggleWatch?: (diamond: Diamond) => void;
 }
 
 export const DiamondCard: React.FC<DiamondCardProps> = ({
   diamond,
   isCompared,
-  isWatched,
   onInspect,
   onToggleCompare,
   onFindPair,
-  onToggleWatch,
 }) => {
   const [imgError, setImgError] = useState(false);
   const [mediaView, setMediaView] = useState<'photo' | 'video'>('photo');
-
-  const dropPercent =
-    diamond.previousPriceUsd && diamond.previousPriceUsd > diamond.priceUsd
-      ? Math.round(
-          ((diamond.previousPriceUsd - diamond.priceUsd) /
-            diamond.previousPriceUsd) *
-            1000
-        ) / 10
-      : null;
 
   const pricePerCarat = Math.round(diamond.priceUsd / diamond.carat);
   const isColoredStone =
@@ -133,33 +119,6 @@ export const DiamondCard: React.FC<DiamondCardProps> = ({
             <Maximize2 className="w-3.5 h-3.5" />
           </button>
         )}
-
-        {/* Price Watch Quick Action */}
-        <button
-          type="button"
-          onClick={() => onToggleWatch(diamond)}
-          title={
-            isWatched
-              ? 'Убрать отслеживание цены'
-              : 'Уведомить при снижении цены'
-          }
-          aria-label={
-            isWatched
-              ? 'Убрать отслеживание цены'
-              : 'Уведомить при снижении цены'
-          }
-          className={`absolute top-3 right-3 w-9 h-9 rounded flex items-center justify-center border transition-colors ${
-            isWatched
-              ? 'bg-[#1B365D] border-[#1B365D] text-white'
-              : 'bg-white/92 backdrop-blur-sm border-[#E4E6EB] text-[#4B5563] hover:text-[#111317]'
-          }`}
-        >
-          {isWatched ? (
-            <BellRing className="w-4 h-4" />
-          ) : (
-            <Bell className="w-4 h-4" />
-          )}
-        </button>
       </div>
 
       {/* Card Body */}
@@ -170,12 +129,6 @@ export const DiamondCard: React.FC<DiamondCardProps> = ({
             <span className="font-mono uppercase tracking-wider truncate">
               {diamond.sku} · {diamond.origin}
             </span>
-            {dropPercent !== null && (
-              <span className="inline-flex items-center gap-1 text-[#0F5132] font-medium whitespace-nowrap shrink-0">
-                <TrendingDown className="w-3.5 h-3.5" />
-                −{dropPercent}%
-              </span>
-            )}
           </div>
 
           {/* Primary Title */}
@@ -190,7 +143,7 @@ export const DiamondCard: React.FC<DiamondCardProps> = ({
                 {SHAPE_SHORT_RU[diamond.shape]} {diamond.carat.toFixed(2)} ct
               </button>
             </h3>
-            <span className="inline-flex items-center gap-1.5 text-sm font-medium text-[#111317] font-mono tabular-nums whitespace-nowrap shrink-0 max-w-[48%] truncate">
+            <span className="inline-flex items-center gap-1.5 text-sm font-medium text-[#111317] font-mono tabular-nums whitespace-nowrap shrink-0 max-w-[52%] truncate">
               {colorSwatch && (
                 <span
                   aria-hidden="true"
@@ -199,14 +152,47 @@ export const DiamondCard: React.FC<DiamondCardProps> = ({
                 />
               )}
               <span className="truncate">
-                {diamond.color} · {diamond.clarity}
+                {diamond.isFancyColor && diamond.fancyIntensity
+                  ? diamond.fancyIntensity
+                  : diamond.color}{' '}
+                · {diamond.clarity}
               </span>
             </span>
           </div>
 
+          {/* Dedicated Fancy Color Grade Line (Full Hue & Overtone) */}
+          {diamond.isFancyColor && (
+            <div className="text-xs font-medium text-[#1B365D] leading-snug truncate">
+              {diamond.color}
+              {diamond.overtone &&
+              diamond.overtone !== 'Чистый тон (Pure)' &&
+              !diamond.color.toLowerCase().includes(diamond.overtone.toLowerCase())
+                ? ` · Обертон: ${diamond.overtone}`
+                : ''}
+            </div>
+          )}
+
           {/* Unboxed Gemological Metadata */}
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#5A606D]">
-            <span>Огранка {diamond.cut}</span>
+            {diamond.isFancyColor ? (
+              <>
+                {diamond.cut && String(diamond.cut) !== 'N/A' && (
+                  <>
+                    <span>Огранка {diamond.cut}</span>
+                    <span aria-hidden="true">·</span>
+                  </>
+                )}
+                <span>Флуор.: {diamond.fluorescence}</span>
+                {diamond.colorOrigin && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span>{diamond.colorOrigin}</span>
+                  </>
+                )}
+              </>
+            ) : (
+              <span>Огранка {diamond.cut}</span>
+            )}
             <span aria-hidden="true">·</span>
             <span className="font-mono tabular-nums">
               {diamond.lengthMm.toFixed(2)}×{diamond.widthMm.toFixed(2)} мм
@@ -230,12 +216,6 @@ export const DiamondCard: React.FC<DiamondCardProps> = ({
               <span className="text-lg font-semibold text-[#111317] font-mono tabular-nums">
                 {formatStonePrice(diamond.priceUsd, diamond.currency)}
               </span>
-              {diamond.previousPriceUsd &&
-                diamond.previousPriceUsd > diamond.priceUsd && (
-                  <span className="text-xs text-[#6B7280] line-through font-mono tabular-nums">
-                    {formatStonePrice(diamond.previousPriceUsd, diamond.currency)}
-                  </span>
-                )}
             </div>
             <span className="text-xs text-[#5A606D] font-mono tabular-nums">
               {formatStonePrice(pricePerCarat, diamond.currency)}/ct

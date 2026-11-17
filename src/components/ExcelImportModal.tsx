@@ -22,16 +22,25 @@ import {
   downloadSampleXlsx,
   parseExcelFile,
 } from '../lib/excelImport';
-import { Diamond } from '../types/diamond';
+import { Diamond, PricingConfig } from '../types/diamond';
 
 interface ExcelImportModalProps {
   open: boolean;
+  defaultTargetDirectory?: 'white' | 'fancy';
+  pricingConfig: PricingConfig;
   onClose: () => void;
-  onImport: (diamonds: Diamond[], replaceExisting: boolean, fileName: string) => void;
+  onImport: (
+    diamonds: Diamond[],
+    replaceExisting: boolean,
+    fileName: string,
+    targetDirectory: 'white' | 'fancy'
+  ) => void;
 }
 
 export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   open,
+  defaultTargetDirectory = 'white',
+  pricingConfig,
   onClose,
   onImport,
 }) => {
@@ -47,6 +56,15 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   const [mapping, setMapping] = useState<ColumnMapping | null>(null);
   const [showColumnMapper, setShowColumnMapper] = useState(false);
   const [replaceCatalog, setReplaceCatalog] = useState(false);
+  const [targetDirectory, setTargetDirectory] = useState<'white' | 'fancy'>(
+    defaultTargetDirectory
+  );
+
+  useEffect(() => {
+    if (open) {
+      setTargetDirectory(defaultTargetDirectory);
+    }
+  }, [open, defaultTargetDirectory]);
 
   useEffect(() => {
     if (!open) return;
@@ -97,8 +115,13 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     if (!activeSheet || !mapping || activeSheet.rows.length <= headerRowIndex + 1) {
       return { diamonds: [], skippedRows: 0 };
     }
-    return mapRowsToDiamonds(activeSheet.rows, mapping, 'xlsx', headerRowIndex);
-  }, [activeSheet, mapping, headerRowIndex]);
+    return mapRowsToDiamonds(activeSheet.rows, mapping, 'xlsx', headerRowIndex, {
+      defaultDirectory: targetDirectory,
+      defaultStoneType:
+        targetDirectory === 'fancy' ? 'Цветной бриллиант' : undefined,
+      pricingConfig,
+    });
+  }, [activeSheet, mapping, headerRowIndex, targetDirectory, pricingConfig]);
 
   const detectedSectionSummary = useMemo(() => {
     if (!mapping || !analysis) return [];
@@ -151,7 +174,12 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
 
   const handleConfirmImport = () => {
     if (parsedResult.diamonds.length === 0 || !workbook) return;
-    onImport(parsedResult.diamonds, replaceCatalog, workbook.fileName);
+    onImport(
+      parsedResult.diamonds,
+      replaceCatalog,
+      workbook.fileName,
+      targetDirectory
+    );
     setWorkbook(null);
     onClose();
   };
@@ -391,7 +419,51 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 </div>
               )}
 
-              {/* Summary & Mode */}
+              {/* Target Directory Selector + Summary & Mode */}
+              <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-[#FAFAFA] border border-[#E4E6EB] rounded-lg">
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <span className="text-xs font-medium text-[#5A606D]">
+                    Целевая директория:
+                  </span>
+                  <div className="inline-flex items-center gap-1 p-0.5 bg-[#EAECEF] rounded-md">
+                    <button
+                      type="button"
+                      onClick={() => setTargetDirectory('white')}
+                      className={`px-3 py-1 text-xs font-medium rounded transition-colors whitespace-nowrap ${
+                        targetDirectory === 'white'
+                          ? 'bg-white text-[#111317] shadow-sm'
+                          : 'text-[#5A606D] hover:text-[#111317]'
+                      }`}
+                    >
+                      Общий каталог
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTargetDirectory('fancy')}
+                      className={`px-3 py-1 text-xs font-medium rounded transition-colors whitespace-nowrap ${
+                        targetDirectory === 'fancy'
+                          ? 'bg-white text-[#111317] shadow-sm'
+                          : 'text-[#5A606D] hover:text-[#111317]'
+                      }`}
+                    >
+                      Цветные бриллианты
+                    </button>
+                  </div>
+                </div>
+
+                <label className="flex items-center gap-2 text-xs text-[#111317] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={replaceCatalog}
+                    onChange={(e) => setReplaceCatalog(e.target.checked)}
+                    className="accent-[#1B365D] w-4 h-4"
+                  />
+                  {targetDirectory === 'fancy'
+                    ? 'Заменить цветные бриллианты директории (вместо добавления)'
+                    : 'Заменить текущий каталог (вместо добавления)'}
+                </label>
+              </div>
+
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-sm">
                   <CheckCircle2 className="w-4 h-4 text-[#0F5132]" />
@@ -404,16 +476,6 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                     </span>
                   )}
                 </div>
-
-                <label className="flex items-center gap-2 text-xs text-[#111317] cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={replaceCatalog}
-                    onChange={(e) => setReplaceCatalog(e.target.checked)}
-                    className="accent-[#1B365D] w-4 h-4"
-                  />
-                  Заменить текущий каталог (вместо добавления)
-                </label>
               </div>
 
               {/* Preview Table */}
@@ -437,7 +499,16 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                           <th className="p-2.5 font-medium">Чистота</th>
                           <th className="p-2.5 font-medium">Размеры (мм)</th>
                           <th className="p-2.5 font-medium">Сертификат</th>
-                          <th className="p-2.5 font-medium text-right">Цена</th>
+                          <th className="p-2.5 font-medium text-right">Входная (файл)</th>
+                          <th className="p-2.5 font-medium text-right">
+                            Клиент (
+                            {pricingConfig.applyOnImport
+                              ? pricingConfig.mode === 'multiplier'
+                                ? `×${pricingConfig.value.toFixed(2)}`
+                                : `+${pricingConfig.value}%`
+                              : 'без наценки'}
+                            )
+                          </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#E4E6EB]">
@@ -461,7 +532,10 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                             <td className="p-2.5 font-mono">
                               {d.certLab} #{d.certNumber}
                             </td>
-                            <td className="p-2.5 font-mono tabular-nums font-semibold text-right">
+                            <td className="p-2.5 font-mono tabular-nums text-[#5A606D] text-right">
+                              {formatStonePrice(d.costPriceUsd ?? d.priceUsd, d.currency)}
+                            </td>
+                            <td className="p-2.5 font-mono tabular-nums font-semibold text-[#111317] text-right">
                               {formatStonePrice(d.priceUsd, d.currency)}
                             </td>
                           </tr>
@@ -494,8 +568,12 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 >
                   <Upload className="w-3.5 h-3.5" />
                   {replaceCatalog
-                    ? `Заменить каталог (${parsedResult.diamonds.length} камней)`
-                    : `Добавить в каталог (${parsedResult.diamonds.length} камней)`}
+                    ? targetDirectory === 'fancy'
+                      ? `Заменить директорию «Цветные бриллианты» (${parsedResult.diamonds.length} камней)`
+                      : `Заменить каталог (${parsedResult.diamonds.length} камней)`
+                    : targetDirectory === 'fancy'
+                      ? `Добавить в «Цветные бриллианты» (${parsedResult.diamonds.length} камней)`
+                      : `Добавить в каталог (${parsedResult.diamonds.length} камней)`}
                 </button>
               </div>
             </div>

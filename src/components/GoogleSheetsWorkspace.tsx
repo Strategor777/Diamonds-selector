@@ -22,7 +22,7 @@ import {
   readDiamondsFromSheet,
   updateSheetValues,
 } from '../lib/googleSheets';
-import { Diamond, PriceDropNotification } from '../types/diamond';
+import { Diamond, PriceDropNotification, PricingConfig } from '../types/diamond';
 import { GoogleSignInButton } from './GoogleSignInButton';
 
 interface PendingWriteConfirmation {
@@ -43,6 +43,7 @@ interface GoogleSheetsWorkspaceProps {
   catalog: Diamond[];
   comparedDiamonds: Diamond[];
   notifications: PriceDropNotification[];
+  pricingConfig: PricingConfig;
   customExportBatch: { stones: Diamond[]; label: string } | null;
   onClearCustomBatch: () => void;
   onImportDiamonds: (diamonds: Diamond[], replaceExisting: boolean) => void;
@@ -57,6 +58,7 @@ export const GoogleSheetsWorkspace: React.FC<GoogleSheetsWorkspaceProps> = ({
   catalog,
   comparedDiamonds,
   notifications,
+  pricingConfig,
   customExportBatch,
   onClearCustomBatch,
   onImportDiamonds,
@@ -122,7 +124,8 @@ export const GoogleSheetsWorkspace: React.FC<GoogleSheetsWorkspaceProps> = ({
       const { diamonds } = await readDiamondsFromSheet(
         accessToken,
         meta.spreadsheetId,
-        selectedTab
+        selectedTab,
+        pricingConfig
       );
       if (diamonds.length === 0) {
         setErrorMsg(
@@ -259,8 +262,9 @@ export const GoogleSheetsWorkspace: React.FC<GoogleSheetsWorkspaceProps> = ({
             Интеграция с Google Таблицами
           </h2>
           <p className="text-sm text-[#5A606D] mt-1 max-w-2xl">
-            Импортируйте инвентарь бриллиантов из вашей Google Таблицы или сохраняйте
-            подборки сравнения, пары и отчёты о снижении цен напрямую в Google Sheets.
+            Импортируйте инвентарь бриллиантов из вашей Google Таблицы (с расчётом
+            клиентской цены из входной) или сохраняйте подборки сравнения и пары
+            напрямую в Google Sheets.
           </p>
         </div>
 
@@ -535,22 +539,6 @@ export const GoogleSheetsWorkspace: React.FC<GoogleSheetsWorkspaceProps> = ({
                     </div>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setExportDataset('alerts')}
-                    className={`p-3 text-left rounded-lg border transition-colors ${
-                      exportDataset === 'alerts'
-                        ? 'border-[#1B365D] bg-[#F8FAFC]'
-                        : 'border-[#E4E6EB] hover:bg-[#FAFAFA]'
-                    }`}
-                  >
-                    <div className="text-xs font-semibold text-[#111317]">
-                      История снижений цен
-                    </div>
-                    <div className="text-xs text-[#5A606D] font-mono tabular-nums mt-0.5">
-                      {notifications.length} событий
-                    </div>
-                  </button>
                 </div>
               </div>
 

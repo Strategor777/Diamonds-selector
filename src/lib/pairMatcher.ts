@@ -1,4 +1,4 @@
-import { ALL_CLARITIES, ALL_COLORS } from '../data/diamonds';
+import { ALL_COLORS, ALL_FANCY_CLARITIES, FANCY_INTENSITY_RANK } from '../data/diamonds';
 import {
   Diamond,
   DiamondClarity,
@@ -15,6 +15,9 @@ export interface PairAnchorSpec {
   carat: number;
   color: DiamondColor;
   colorFamily?: string;
+  isFancyColor?: boolean;
+  fancyIntensity?: string;
+  primaryHue?: string;
   clarity: DiamondClarity;
   lengthMm: number;
   widthMm: number;
@@ -23,29 +26,48 @@ export interface PairAnchorSpec {
 }
 
 function getColorSteps(
-  colorA: string,
-  familyA: string | undefined,
-  colorB: string,
-  familyB: string | undefined
+  anchor: PairAnchorSpec,
+  stone: Diamond
 ): number {
-  const idxA = ALL_COLORS.indexOf(colorA.toUpperCase());
-  const idxB = ALL_COLORS.indexOf(colorB.toUpperCase());
-
+  // White D-J diamonds
+  const idxA = ALL_COLORS.indexOf(anchor.color.toUpperCase());
+  const idxB = ALL_COLORS.indexOf(stone.color.toUpperCase());
   if (idxA >= 0 && idxB >= 0) {
     return Math.abs(idxA - idxB);
   }
-  if (colorA.trim().toLowerCase() === colorB.trim().toLowerCase()) {
+
+  // Fancy Color Diamonds: compare hue + intensity grade distance
+  if (anchor.isFancyColor || stone.isFancyColor) {
+    const hueA = (anchor.primaryHue || anchor.colorFamily || '').toLowerCase();
+    const hueB = (stone.primaryHue || stone.colorFamily || '').toLowerCase();
+    const sameHue = hueA && hueB && hueA === hueB;
+    const sameFamily =
+      anchor.colorFamily && stone.colorFamily && anchor.colorFamily === stone.colorFamily;
+
+    if (!sameHue && !sameFamily) {
+      return 5;
+    }
+
+    const rankA = anchor.fancyIntensity ? FANCY_INTENSITY_RANK[anchor.fancyIntensity] : undefined;
+    const rankB = stone.fancyIntensity ? FANCY_INTENSITY_RANK[stone.fancyIntensity] : undefined;
+    if (rankA !== undefined && rankB !== undefined) {
+      return Math.abs(rankA - rankB);
+    }
+    return anchor.color.trim().toLowerCase() === stone.color.trim().toLowerCase() ? 0 : 1;
+  }
+
+  if (anchor.color.trim().toLowerCase() === stone.color.trim().toLowerCase()) {
     return 0;
   }
-  if (familyA && familyB && familyA === familyB) {
+  if (anchor.colorFamily && stone.colorFamily && anchor.colorFamily === stone.colorFamily) {
     return 1;
   }
   return 4;
 }
 
 function getClaritySteps(clarityA: string, clarityB: string): number {
-  const idxA = ALL_CLARITIES.indexOf(clarityA.toUpperCase());
-  const idxB = ALL_CLARITIES.indexOf(clarityB.toUpperCase());
+  const idxA = ALL_FANCY_CLARITIES.indexOf(clarityA.toUpperCase());
+  const idxB = ALL_FANCY_CLARITIES.indexOf(clarityB.toUpperCase());
   if (idxA >= 0 && idxB >= 0) {
     return Math.abs(idxA - idxB);
   }
@@ -71,12 +93,7 @@ export function findMatchedPairs(
     const maxDimensionDiffMm = Math.max(lengthDiffMm, widthDiffMm);
     if (maxDimensionDiffMm > criteria.sizeToleranceMm) continue;
 
-    const colorSteps = getColorSteps(
-      anchor.color,
-      anchor.colorFamily,
-      stone.color,
-      stone.colorFamily
-    );
+    const colorSteps = getColorSteps(anchor, stone);
     if (colorSteps > criteria.colorToleranceSteps) continue;
 
     const claritySteps = getClaritySteps(anchor.clarity, stone.clarity);
@@ -98,7 +115,7 @@ export function findMatchedPairs(
       0,
       25 * (1 - caratDiff / Math.max(0.05, criteria.caratTolerance * 1.4))
     );
-    const colorScore = Math.max(0, 20 - colorSteps * 8);
+    const colorScore = Math.max(0, 20 - colorSteps * 7);
     const clarityScore = Math.max(0, 10 - claritySteps * 3);
     const shapeBonus = stone.shape === anchor.shape ? 5 : 0;
 

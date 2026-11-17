@@ -1,25 +1,25 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { User } from 'firebase/auth';
 import {
   ArrowRight,
-  BellRing,
   Scale,
-  TrendingDown,
   X,
 } from 'lucide-react';
 import { CatalogSection } from './components/CatalogSection';
 import { CompareView } from './components/CompareView';
 import { DiamondDetailModal } from './components/DiamondDetailModal';
 import { ExcelImportModal } from './components/ExcelImportModal';
+import { FancyDiamondsView } from './components/FancyDiamondsView';
 import { GoogleSheetsWorkspace } from './components/GoogleSheetsWorkspace';
 import { GoogleSignInButton } from './components/GoogleSignInButton';
+import { ManagerCabinetView } from './components/ManagerCabinetView';
 import { PairFinderView } from './components/PairFinderView';
-import { PriceAlertsView } from './components/PriceAlertsView';
 import {
+  ALL_INITIAL_DIAMONDS,
+  DEFAULT_PRICING_CONFIG,
   HERO_IMAGE_URL,
-  INITIAL_DIAMONDS,
   SHAPE_SHORT_RU,
-  formatStonePrice,
+  applyPricingToDiamond,
 } from './data/diamonds';
 import {
   getAccessToken,
@@ -31,8 +31,7 @@ import {
   AppSection,
   Diamond,
   DiamondFilters,
-  PriceAlertRule,
-  PriceDropNotification,
+  PricingConfig,
 } from './types/diamond';
 
 const DEFAULT_FILTERS: DiamondFilters = {
@@ -44,50 +43,20 @@ const DEFAULT_FILTERS: DiamondFilters = {
   minCarat: 0.2,
   maxCarat: 6.0,
   minPrice: 0,
-  maxPrice: 95000,
+  maxPrice: 150000,
   certLab: 'ALL',
   onlyPriceDrops: false,
   searchQuery: '',
   sortBy: 'price-asc',
 };
 
-function playPriceDropChime() {
-  try {
-    const AudioCtx =
-      window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
-    const now = ctx.currentTime;
-
-    const osc1 = ctx.createOscillator();
-    const osc2 = ctx.createOscillator();
-    const gain = ctx.createGain();
-
-    osc1.type = 'sine';
-    osc2.type = 'sine';
-    osc1.frequency.setValueAtTime(880, now);
-    osc2.frequency.setValueAtTime(1318.5, now + 0.08);
-
-    gain.gain.setValueAtTime(0.06, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
-
-    osc1.connect(gain);
-    osc2.connect(gain);
-    gain.connect(ctx.destination);
-
-    osc1.start(now);
-    osc1.stop(now + 0.25);
-    osc2.start(now + 0.08);
-    osc2.stop(now + 0.45);
-  } catch {
-    // Ignore audio context restrictions if user hasn't interacted yet
-  }
-}
-
 export default function App() {
   const [activeSection, setActiveSection] = useState<AppSection>('catalog');
-  const [catalog, setCatalog] = useState<Diamond[]>(INITIAL_DIAMONDS);
+  const [catalog, setCatalog] = useState<Diamond[]>(ALL_INITIAL_DIAMONDS);
   const [filters, setFilters] = useState<DiamondFilters>(DEFAULT_FILTERS);
+  const [pricingConfig, setPricingConfig] = useState<PricingConfig>(
+    DEFAULT_PRICING_CONFIG
+  );
 
   // Google Workspace Auth state
   const [user, setUser] = useState<User | null>(null);
@@ -104,54 +73,6 @@ export default function App() {
   // Pair Finder anchor
   const [pairAnchorId, setPairAnchorId] = useState<string | null>('dm-001');
 
-  // Price-Drop Alert System
-  const [alertRules, setAlertRules] = useState<PriceAlertRule[]>([
-    {
-      id: 'rule-init-1',
-      label: 'Круглые и Овалы 1.40–2.20 ct (D–F)',
-      shapes: ['Round', 'Oval'],
-      colors: ['D', 'E', 'F'],
-      minCarat: 1.4,
-      maxCarat: 2.2,
-      maxPriceUsd: 26000,
-      active: true,
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: 'rule-init-2',
-      label: 'Отслеживание ANT-RD-152D',
-      diamondId: 'dm-001',
-      shapes: ['Round'],
-      colors: ['D'],
-      minCarat: 1.5,
-      maxCarat: 1.6,
-      maxPriceUsd: 23000,
-      active: true,
-      createdAt: new Date().toISOString(),
-    },
-  ]);
-
-  const [notifications, setNotifications] = useState<PriceDropNotification[]>([
-    {
-      id: 'notif-init-1',
-      diamondId: 'dm-003',
-      sku: 'GEN-OV-204E',
-      shape: 'Oval',
-      carat: 2.04,
-      color: 'E',
-      clarity: 'VS1',
-      oldPriceUsd: 26800,
-      newPriceUsd: 24900,
-      dropPercent: 7.1,
-      timestamp: '2026-11-16T06:10:00Z',
-      read: false,
-    },
-  ]);
-
-  const [activeToast, setActiveToast] = useState<PriceDropNotification | null>(null);
-  const [liveMonitoring, setLiveMonitoring] = useState(true);
-  const [soundEnabled, setSoundEnabled] = useState(true);
-
   // Custom export batch sent from Compare or PairFinder to Google Sheets workspace
   const [customExportBatch, setCustomExportBatch] = useState<{
     stones: Diamond[];
@@ -159,12 +80,13 @@ export default function App() {
   } | null>(null);
 
   const [isExcelModalOpen, setIsExcelModalOpen] = useState(false);
+  const [excelTargetDirectory, setExcelTargetDirectory] = useState<'white' | 'fancy'>('white');
   const [importBanner, setImportBanner] = useState<string | null>(null);
 
   const [heroImgError, setHeroImgError] = useState(false);
 
   // Initialize Firebase Auth listener (in-memory token only)
-  useEffect(() => {
+  React.useEffect(() => {
     const unsubscribe = initAuth(
       (signedInUser, token) => {
         setUser(signedInUser);
@@ -199,114 +121,12 @@ export default function App() {
     setAccessToken(null);
   };
 
-  // Refresh token accessor check
-  useEffect(() => {
+  // Ensure useEffect is referenced when initializing auth
+  React.useEffect(() => {
     getAccessToken().then((t) => {
       if (t) setAccessToken(t);
     });
   }, []);
-
-  // Repricing / Instant Price Drop Engine
-  const catalogRef = useRef(catalog);
-  catalogRef.current = catalog;
-  const rulesRef = useRef(alertRules);
-  rulesRef.current = alertRules;
-
-  const triggerMarketRepricing = useCallback(
-    (manual: boolean) => {
-      const currentCatalog = catalogRef.current;
-      const activeRules = rulesRef.current.filter((r) => r.active);
-      if (currentCatalog.length === 0) return;
-
-      // Prefer a diamond matching an active rule so the user sees immediate matched feedback
-      const matchingCandidates = currentCatalog.filter((d) =>
-        activeRules.some((r) => {
-          if (r.diamondId) return r.diamondId === d.id;
-          return (
-            r.shapes.includes(d.shape) &&
-            r.colors.includes(d.color) &&
-            d.carat >= r.minCarat &&
-            d.carat <= r.maxCarat
-          );
-        })
-      );
-
-      const pool =
-        matchingCandidates.length > 0 ? matchingCandidates : currentCatalog;
-      const chosen = pool[Math.floor(Math.random() * pool.length)];
-      if (!chosen) return;
-
-      const dropFactor = manual ? 0.945 : 0.965;
-      const oldPrice = chosen.priceUsd;
-      const newPrice = Math.max(100, Math.round((oldPrice * dropFactor) / 10) * 10);
-      if (newPrice >= oldPrice) return;
-
-      const dropPercent =
-        Math.round(((oldPrice - newPrice) / oldPrice) * 1000) / 10;
-      const nowIso = new Date().toISOString();
-
-      setCatalog((prev) =>
-        prev.map((d) =>
-          d.id === chosen.id
-            ? {
-                ...d,
-                previousPriceUsd: oldPrice,
-                priceUsd: newPrice,
-                priceChangedAt: nowIso,
-              }
-            : d
-        )
-      );
-
-      const matchesRule = activeRules.some((r) => {
-        if (r.diamondId) return r.diamondId === chosen.id;
-        return (
-          r.shapes.includes(chosen.shape) &&
-          r.colors.includes(chosen.color) &&
-          chosen.carat >= r.minCarat &&
-          chosen.carat <= r.maxCarat &&
-          newPrice <= r.maxPriceUsd
-        );
-      });
-
-      if (matchesRule || manual) {
-        const notif: PriceDropNotification = {
-          id: `notif-${Date.now()}`,
-          diamondId: chosen.id,
-          sku: chosen.sku,
-          shape: chosen.shape,
-          carat: chosen.carat,
-          color: chosen.color,
-          clarity: chosen.clarity,
-          oldPriceUsd: oldPrice,
-          newPriceUsd: newPrice,
-          dropPercent,
-          timestamp: nowIso,
-          read: false,
-        };
-        setNotifications((prev) => [notif, ...prev]);
-        setActiveToast(notif);
-        if (soundEnabled) {
-          playPriceDropChime();
-        }
-      }
-    },
-    [soundEnabled]
-  );
-
-  useEffect(() => {
-    if (!liveMonitoring) return;
-    const timer = window.setInterval(() => {
-      triggerMarketRepricing(false);
-    }, 24000);
-    return () => window.clearInterval(timer);
-  }, [liveMonitoring, triggerMarketRepricing]);
-
-  useEffect(() => {
-    if (!activeToast) return;
-    const t = window.setTimeout(() => setActiveToast(null), 9000);
-    return () => window.clearTimeout(t);
-  }, [activeToast]);
 
   const filteredCatalog = useMemo(() => {
     const q = filters.searchQuery.trim().toLowerCase();
@@ -389,6 +209,20 @@ export default function App() {
     });
   }, [catalog, filters]);
 
+  const fancyDiamonds = useMemo(
+    () =>
+      catalog.filter(
+        (d) =>
+          d.directory === 'fancy' ||
+          (Boolean(d.colorFamily) &&
+            d.colorFamily !== 'Бесцветный (D–J)' &&
+            (!d.stoneType ||
+              d.stoneType.toLowerCase().includes('бриллиант') ||
+              d.stoneType.toLowerCase().includes('diamond')))
+      ),
+    [catalog]
+  );
+
   const inspectedDiamond = useMemo(
     () => catalog.find((d) => d.id === inspectedDiamondId) || null,
     [catalog, inspectedDiamondId]
@@ -399,18 +233,7 @@ export default function App() {
     [catalog, comparedIds]
   );
 
-  const watchedDiamondIds = useMemo(() => {
-    const set = new Set<string>();
-    for (const r of alertRules) {
-      if (r.active && r.diamondId) set.add(r.diamondId);
-    }
-    return set;
-  }, [alertRules]);
-
-  const unreadAlertsCount = useMemo(
-    () => notifications.filter((n) => !n.read).length,
-    [notifications]
-  );
+  const watchedDiamondIds = useMemo(() => new Set<string>(), []);
 
   const handleToggleCompare = (diamondId: string) => {
     setComparedIds((prev) => {
@@ -424,27 +247,8 @@ export default function App() {
     });
   };
 
-  const handleToggleWatchDiamond = (diamond: Diamond) => {
-    const existing = alertRules.find((r) => r.diamondId === diamond.id);
-    if (existing) {
-      setAlertRules((prev) => prev.filter((r) => r.id !== existing.id));
-    } else {
-      setAlertRules((prev) => [
-        {
-          id: `rule-${Date.now()}`,
-          label: `Отслеживание ${diamond.sku} (${SHAPE_SHORT_RU[diamond.shape]} ${diamond.carat.toFixed(2)} ct)`,
-          diamondId: diamond.id,
-          shapes: [diamond.shape],
-          colors: [diamond.color],
-          minCarat: diamond.carat,
-          maxCarat: diamond.carat,
-          maxPriceUsd: diamond.priceUsd,
-          active: true,
-          createdAt: new Date().toISOString(),
-        },
-        ...prev,
-      ]);
-    }
+  const handleToggleWatchDiamond = () => {
+    // Instant price-drop notifications temporarily disabled
   };
 
   const handleInspect = (
@@ -544,21 +348,82 @@ export default function App() {
     setActiveSection('catalog');
   };
 
+  const handleOpenExcelImport = (targetDir: 'white' | 'fancy') => {
+    setExcelTargetDirectory(targetDir);
+    setIsExcelModalOpen(true);
+  };
+
   const handleImportFromExcel = (
     imported: Diamond[],
     replaceExisting: boolean,
-    fileName: string
+    fileName: string,
+    targetDirectory: 'white' | 'fancy'
   ) => {
     expandFilterBoundsForDiamonds(imported, replaceExisting);
-    setCatalog((prev) => (replaceExisting ? imported : [...imported, ...prev]));
-    if (replaceExisting && imported.length > 0) {
+    const isFancyStone = (d: Diamond) =>
+      d.directory === 'fancy' ||
+      (Boolean(d.colorFamily) &&
+        d.colorFamily !== 'Бесцветный (D–J)' &&
+        (!d.stoneType ||
+          d.stoneType.toLowerCase().includes('бриллиант') ||
+          d.stoneType.toLowerCase().includes('diamond')));
+
+    setCatalog((prev) => {
+      if (!replaceExisting) {
+        return [...imported, ...prev];
+      }
+      if (targetDirectory === 'fancy') {
+        return [...imported, ...prev.filter((d) => !isFancyStone(d))];
+      }
+      return imported;
+    });
+
+    if (replaceExisting && imported.length > 0 && targetDirectory === 'white') {
       setComparedIds([]);
       setPairAnchorId(imported[0].id);
     }
+
+    const dirLabel =
+      targetDirectory === 'fancy' ? 'директорию «Цветные бриллианты»' : 'каталог';
     setImportBanner(
-      `${replaceExisting ? 'Каталог обновлён' : 'Добавлено'} ${imported.length} камней из файла «${fileName}».`
+      `${replaceExisting ? 'Обновлена база' : 'Добавлено'} ${imported.length} камней в ${dirLabel} из файла «${fileName}».`
     );
-    setActiveSection('catalog');
+    setActiveSection(targetDirectory === 'fancy' ? 'fancy' : 'catalog');
+  };
+
+  // Manager Cabinet Actions
+  const handleApplyPricingToStones = (
+    stoneIds: string[] | null,
+    nextConfig: PricingConfig
+  ) => {
+    const idSet = stoneIds ? new Set(stoneIds) : null;
+    setCatalog((prev) => {
+      const updated = prev.map((stone) =>
+        idSet === null || idSet.has(stone.id)
+          ? applyPricingToDiamond(stone, nextConfig)
+          : stone
+      );
+      expandFilterBoundsForDiamonds(updated, false);
+      return updated;
+    });
+  };
+
+  const handleUpdateDiamond = (updated: Diamond) => {
+    setCatalog((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
+    expandFilterBoundsForDiamonds([updated], false);
+  };
+
+  const handleAddDiamond = (created: Diamond) => {
+    setCatalog((prev) => [created, ...prev]);
+    expandFilterBoundsForDiamonds([created], false);
+  };
+
+  const handleDeleteDiamond = (diamondId: string) => {
+    setCatalog((prev) => prev.filter((d) => d.id !== diamondId));
+    setComparedIds((prev) => prev.filter((id) => id !== diamondId));
+    if (inspectedDiamondId === diamondId) {
+      setInspectedDiamondId(null);
+    }
   };
 
   return (
@@ -575,10 +440,10 @@ export default function App() {
             Diamonds Selector
           </button>
 
-          {/* Zone 2: 5 concise single-line nav links */}
+          {/* Zone 2: Concise single-line nav links */}
           <nav
             aria-label="Основная навигация"
-            className="hidden lg:flex items-center gap-6 text-sm font-medium text-[#5A606D]"
+            className="hidden lg:flex items-center gap-4 xl:gap-5 text-sm font-medium text-[#5A606D]"
           >
             <button
               type="button"
@@ -590,6 +455,17 @@ export default function App() {
               }`}
             >
               Каталог
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveSection('fancy')}
+              className={`py-1 border-b-2 transition-colors whitespace-nowrap shrink-0 tabular-nums ${
+                activeSection === 'fancy'
+                  ? 'border-[#1B365D] text-[#111317]'
+                  : 'border-transparent hover:text-[#111317]'
+              }`}
+            >
+              Цветные бриллианты
             </button>
             <button
               type="button"
@@ -615,17 +491,6 @@ export default function App() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveSection('alerts')}
-              className={`py-1 border-b-2 transition-colors whitespace-nowrap shrink-0 tabular-nums ${
-                activeSection === 'alerts'
-                  ? 'border-[#1B365D] text-[#111317]'
-                  : 'border-transparent hover:text-[#111317]'
-              }`}
-            >
-              Оповещения{unreadAlertsCount > 0 ? ` (${unreadAlertsCount})` : ''}
-            </button>
-            <button
-              type="button"
               onClick={() => setActiveSection('sheets')}
               className={`py-1 border-b-2 transition-colors whitespace-nowrap shrink-0 ${
                 activeSection === 'sheets'
@@ -634,6 +499,17 @@ export default function App() {
               }`}
             >
               Google Таблицы
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveSection('manager')}
+              className={`py-1 border-b-2 transition-colors whitespace-nowrap shrink-0 ${
+                activeSection === 'manager'
+                  ? 'border-[#1B365D] text-[#111317]'
+                  : 'border-transparent hover:text-[#111317]'
+              }`}
+            >
+              Кабинет менеджера
             </button>
           </nav>
 
@@ -662,13 +538,11 @@ export default function App() {
           {(
             [
               { id: 'catalog', label: 'Каталог' },
+              { id: 'fancy', label: 'Цветные бриллианты' },
               { id: 'pair-finder', label: 'Подбор пары' },
               { id: 'compare', label: `Сравнение (${comparedIds.length})` },
-              {
-                id: 'alerts',
-                label: `Оповещения${unreadAlertsCount > 0 ? ` (${unreadAlertsCount})` : ''}`,
-              },
               { id: 'sheets', label: 'Google Таблицы' },
+              { id: 'manager', label: 'Кабинет менеджера' },
             ] as const
           ).map((item) => (
             <button
@@ -816,7 +690,44 @@ export default function App() {
               onToggleCompare={handleToggleCompare}
               onFindPair={handleFindPair}
               onToggleWatch={handleToggleWatchDiamond}
-              onOpenExcelImport={() => setIsExcelModalOpen(true)}
+              onOpenExcelImport={() => handleOpenExcelImport('white')}
+            />
+          </>
+        )}
+
+        {activeSection === 'fancy' && (
+          <>
+            {importBanner && (
+              <div className="max-w-7xl mx-auto px-6 pt-6">
+                <div className="p-3.5 rounded-lg bg-[#ECFDF5] border border-[#A7F3D0] text-xs text-[#065F46] flex items-center justify-between gap-3">
+                  <span>{importBanner}</span>
+                  <button
+                    type="button"
+                    onClick={() => setImportBanner(null)}
+                    aria-label="Скрыть уведомление"
+                    className="text-[#065F46] hover:text-[#043927]"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+            <FancyDiamondsView
+              diamonds={fancyDiamonds}
+              comparedIds={comparedIds}
+              watchedDiamondIds={watchedDiamondIds}
+              onInspect={handleInspect}
+              onToggleCompare={handleToggleCompare}
+              onFindPair={handleFindPair}
+              onToggleWatch={handleToggleWatchDiamond}
+              onOpenExcelImport={() => handleOpenExcelImport('fancy')}
+              onGoToPairFinder={() => {
+                const firstFancy = fancyDiamonds[0];
+                if (firstFancy) setPairAnchorId(firstFancy.id);
+                setActiveSection('pair-finder');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              onExportSheets={handleExportToSheets}
             />
           </>
         )}
@@ -846,48 +757,6 @@ export default function App() {
           />
         )}
 
-        {activeSection === 'alerts' && (
-          <PriceAlertsView
-            catalog={catalog}
-            rules={alertRules}
-            notifications={notifications}
-            liveMonitoring={liveMonitoring}
-            soundEnabled={soundEnabled}
-            onToggleLiveMonitoring={() => setLiveMonitoring((v) => !v)}
-            onToggleSound={() => setSoundEnabled((v) => !v)}
-            onTriggerPriceCheckNow={() => triggerMarketRepricing(true)}
-            onAddRule={(rule) =>
-              setAlertRules((prev) => [
-                {
-                  ...rule,
-                  id: `rule-${Date.now()}`,
-                  createdAt: new Date().toISOString(),
-                },
-                ...prev,
-              ])
-            }
-            onDeleteRule={(ruleId) =>
-              setAlertRules((prev) => prev.filter((r) => r.id !== ruleId))
-            }
-            onToggleRuleActive={(ruleId) =>
-              setAlertRules((prev) =>
-                prev.map((r) => (r.id === ruleId ? { ...r, active: !r.active } : r))
-              )
-            }
-            onMarkAllRead={() =>
-              setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
-            }
-            onInspectDiamond={(id) => {
-              const found = catalog.find((d) => d.id === id);
-              if (found) handleInspect(found, 'photo');
-            }}
-            onExportAlertsToSheets={() => {
-              setCustomExportBatch(null);
-              setActiveSection('sheets');
-            }}
-          />
-        )}
-
         {activeSection === 'sheets' && (
           <GoogleSheetsWorkspace
             user={user}
@@ -897,16 +766,32 @@ export default function App() {
             onLogout={handleGoogleLogout}
             catalog={catalog}
             comparedDiamonds={comparedDiamonds}
-            notifications={notifications}
+            notifications={[]}
+            pricingConfig={pricingConfig}
             customExportBatch={customExportBatch}
             onClearCustomBatch={() => setCustomExportBatch(null)}
             onImportDiamonds={handleImportFromSheets}
           />
         )}
+
+        {activeSection === 'manager' && (
+          <ManagerCabinetView
+            catalog={catalog}
+            pricingConfig={pricingConfig}
+            managerEmail={user?.email ?? null}
+            onUpdatePricingConfig={setPricingConfig}
+            onApplyPricingToStones={handleApplyPricingToStones}
+            onUpdateDiamond={handleUpdateDiamond}
+            onAddDiamond={handleAddDiamond}
+            onDeleteDiamond={handleDeleteDiamond}
+            onOpenExcelImport={() => handleOpenExcelImport('white')}
+          />
+        )}
       </main>
 
-      {/* Compact Comparison Tray on Catalog View */}
-      {activeSection === 'catalog' && comparedIds.length > 0 && (
+      {/* Compact Comparison Tray on Catalog & Fancy Views */}
+      {(activeSection === 'catalog' || activeSection === 'fancy') &&
+        comparedIds.length > 0 && (
         <div className="sticky bottom-4 z-30 max-w-2xl mx-auto px-4 w-full pointer-events-none">
           <div className="pointer-events-auto bg-[#111317] text-white rounded-xl px-4 py-2.5 shadow-xl flex items-center justify-between gap-4 border border-white/10">
             <div className="flex items-center gap-2.5 text-xs min-w-0">
@@ -941,88 +826,24 @@ export default function App() {
         </div>
       )}
 
-      {/* Instant Price-Drop Toast Notification */}
-      {activeToast && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="fixed bottom-5 right-5 z-50 max-w-sm w-[calc(100%-2.5rem)] bg-white border border-[#1B365D] rounded-xl shadow-2xl p-4 space-y-2.5"
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-center gap-2 text-xs font-semibold text-[#0F5132]">
-              <TrendingDown className="w-4 h-4" />
-              <span>Мгновенное снижение цены (−{activeToast.dropPercent}%)</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setActiveToast(null)}
-              aria-label="Закрыть уведомление"
-              className="text-[#6B7280] hover:text-[#111317]"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-          <div className="text-sm font-semibold text-[#111317]">
-            {SHAPE_SHORT_RU[activeToast.shape]} {activeToast.carat.toFixed(2)} ct ·{' '}
-            {activeToast.color} · {activeToast.clarity} ({activeToast.sku})
-          </div>
-          <div className="flex items-center justify-between gap-3 pt-1">
-            <div className="text-xs font-mono tabular-nums">
-              {(() => {
-                const toastCurrency =
-                  catalog.find((d) => d.id === activeToast.diamondId)?.currency ||
-                  'USD';
-                return (
-                  <>
-                    <span className="text-[#6B7280] line-through">
-                      {formatStonePrice(activeToast.oldPriceUsd, toastCurrency)}
-                    </span>{' '}
-                    <span className="font-semibold text-[#111317]">
-                      → {formatStonePrice(activeToast.newPriceUsd, toastCurrency)}
-                    </span>
-                  </>
-                );
-              })()}
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  const stone = catalog.find((d) => d.id === activeToast.diamondId);
-                  if (stone) handleInspect(stone, 'photo');
-                  setActiveToast(null);
-                }}
-                className="px-2.5 py-1 text-xs font-medium rounded bg-[#1B365D] text-white hover:bg-[#142947] transition-colors"
-              >
-                Открыть
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveSection('alerts');
-                  setActiveToast(null);
-                }}
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded border border-[#D5D9E0] text-[#111317] hover:bg-[#F7F8FA]"
-              >
-                <BellRing className="w-3 h-3" />
-                Все
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Quiet Editorial Footer */}
       <footer className="bg-white border-t border-[#E4E6EB] mt-16">
         <div className="max-w-7xl mx-auto px-6 py-8 flex flex-wrap items-center justify-between gap-4 text-xs text-[#5A606D]">
           <div>Diamonds Selector — Селектор сертифицированных бриллиантов</div>
-          <div className="flex items-center gap-6">
+          <div className="flex flex-wrap items-center gap-6">
             <button
               type="button"
               onClick={() => setActiveSection('catalog')}
               className="hover:text-[#111317] transition-colors"
             >
               Каталог
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveSection('fancy')}
+              className="hover:text-[#111317] transition-colors"
+            >
+              Цветные бриллианты
             </button>
             <button
               type="button"
@@ -1033,17 +854,17 @@ export default function App() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveSection('alerts')}
-              className="hover:text-[#111317] transition-colors"
-            >
-              Уведомления о ценах
-            </button>
-            <button
-              type="button"
               onClick={() => setActiveSection('sheets')}
               className="hover:text-[#111317] transition-colors"
             >
               Google Таблицы
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveSection('manager')}
+              className="hover:text-[#111317] transition-colors"
+            >
+              Кабинет менеджера
             </button>
           </div>
         </div>
@@ -1056,18 +877,16 @@ export default function App() {
         isCompared={
           inspectedDiamond ? comparedIds.includes(inspectedDiamond.id) : false
         }
-        isWatched={
-          inspectedDiamond ? watchedDiamondIds.has(inspectedDiamond.id) : false
-        }
         onClose={() => setInspectedDiamondId(null)}
         onToggleCompare={handleToggleCompare}
         onFindPair={handleFindPair}
-        onToggleWatch={handleToggleWatchDiamond}
       />
 
       {/* Excel (.xlsx/.xls/.csv) Import Modal */}
       <ExcelImportModal
         open={isExcelModalOpen}
+        defaultTargetDirectory={excelTargetDirectory}
+        pricingConfig={pricingConfig}
         onClose={() => setIsExcelModalOpen(false)}
         onImport={handleImportFromExcel}
       />

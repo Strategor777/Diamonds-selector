@@ -11,8 +11,10 @@ import {
 import {
   ALL_CLARITIES,
   ALL_COLORS,
+  FANCY_INTENSITY_RANK,
   SHAPE_SHORT_RU,
   formatStonePrice,
+  getColorHexTint,
 } from '../data/diamonds';
 import { Diamond } from '../types/diamond';
 import { DiamondShapeIcon } from './DiamondShapeIcon';
@@ -77,6 +79,12 @@ export const CompareView: React.FC<CompareViewProps> = ({
   const maxDimMm = Math.max(
     ...diamonds.map((d) => Math.max(d.lengthMm, d.widthMm))
   );
+  const hasFancyDiamonds = diamonds.some((d) => Boolean(d.isFancyColor));
+  const intensityRanks = diamonds
+    .map((d) => FANCY_INTENSITY_RANK[d.fancyIntensity || ''] || 0)
+    .filter((r) => r > 0);
+  const bestIntensityRank =
+    intensityRanks.length > 1 ? Math.max(...intensityRanks) : 0;
 
   return (
     <section className="max-w-7xl mx-auto px-6 py-10 space-y-8">
@@ -139,8 +147,15 @@ export const CompareView: React.FC<CompareViewProps> = ({
               >
                 <div className="h-28 flex items-center justify-center">
                   <div
-                    style={{ width: `${boxPx}px`, height: `${boxPx}px` }}
-                    className="flex items-center justify-center text-[#1B365D] transition-all duration-200"
+                    style={{
+                      width: `${boxPx}px`,
+                      height: `${boxPx}px`,
+                      color:
+                        d.colorFamily && d.colorFamily !== 'Бесцветный (D–J)'
+                          ? getColorHexTint(d.color, d.colorFamily).deep
+                          : '#1B365D',
+                    }}
+                    className="flex items-center justify-center transition-all duration-200"
                   >
                     <DiamondShapeIcon shape={d.shape} className="w-full h-full" filled />
                   </div>
@@ -251,7 +266,9 @@ export const CompareView: React.FC<CompareViewProps> = ({
                 <td className="p-4 text-xs font-medium text-[#5A606D]">Цвет</td>
                 {diamonds.map((d) => {
                   const isBest =
-                    diamonds.length > 1 && ALL_COLORS.indexOf(d.color) === bestColorIdx;
+                    diamonds.length > 1 &&
+                    bestColorIdx >= 0 &&
+                    ALL_COLORS.indexOf(d.color) === bestColorIdx;
                   return (
                     <td key={d.id} className="p-4 font-mono">
                       <span className="font-semibold text-[#111317]">{d.color}</span>
@@ -265,6 +282,56 @@ export const CompareView: React.FC<CompareViewProps> = ({
                   );
                 })}
               </tr>
+              {hasFancyDiamonds && (
+                <>
+                  <tr>
+                    <td className="p-4 text-xs font-medium text-[#5A606D]">
+                      Интенсивность (Intensity)
+                    </td>
+                    {diamonds.map((d) => {
+                      const rank = FANCY_INTENSITY_RANK[d.fancyIntensity || ''] || 0;
+                      const isBest = bestIntensityRank > 0 && rank === bestIntensityRank;
+                      return (
+                        <td key={d.id} className="p-4 text-xs text-[#111317]">
+                          <span className="font-semibold">
+                            {d.fancyIntensity || '—'}
+                          </span>
+                          {isBest && (
+                            <span className="ml-2 inline-flex items-center gap-1 text-xs font-sans text-[#1B365D] font-medium">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              Насыщеннее
+                            </span>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                  <tr>
+                    <td className="p-4 text-xs font-medium text-[#5A606D]">
+                      Тон / Обертон
+                    </td>
+                    {diamonds.map((d) => (
+                      <td key={d.id} className="p-4 text-xs text-[#111317]">
+                        {d.isFancyColor
+                          ? `${d.primaryHue || '—'} · ${d.overtone || 'Чистый тон'}`
+                          : '—'}
+                      </td>
+                    ))}
+                  </tr>
+                  <tr>
+                    <td className="p-4 text-xs font-medium text-[#5A606D]">
+                      Происхождение / Распределение
+                    </td>
+                    {diamonds.map((d) => (
+                      <td key={d.id} className="p-4 text-xs text-[#111317]">
+                        {d.isFancyColor
+                          ? `${d.colorOrigin || 'Natural'} · ${d.colorDistribution || 'Even'}`
+                          : 'Natural'}
+                      </td>
+                    ))}
+                  </tr>
+                </>
+              )}
               <tr>
                 <td className="p-4 text-xs font-medium text-[#5A606D]">Чистота</td>
                 {diamonds.map((d) => {

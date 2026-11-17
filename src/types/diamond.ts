@@ -24,6 +24,15 @@ export type CertLab = 'GIA' | 'IGI' | 'HRD' | 'GRS' | 'SSEF' | 'Gubelin' | strin
 
 export type PriceCurrency = 'USD' | 'RUB' | 'EUR';
 
+export type PricingMode = 'multiplier' | 'percent';
+
+export interface PricingConfig {
+  mode: PricingMode;
+  value: number;
+  roundingStep: 1 | 10 | 50 | 100;
+  applyOnImport: boolean;
+}
+
 export interface Diamond {
   id: string;
   sku: string;
@@ -53,6 +62,9 @@ export interface Diamond {
   certUrl: string;
   imageUrl: string;
   videoUrl?: string;
+  costPriceUsd?: number;
+  markupMode?: PricingMode;
+  markupValue?: number;
   priceUsd: number;
   currency?: PriceCurrency;
   previousPriceUsd?: number;
@@ -60,6 +72,14 @@ export interface Diamond {
   origin: string;
   inStock: boolean;
   source?: 'catalog' | 'sheets' | 'xlsx';
+  directory?: 'white' | 'fancy';
+  isFancyColor?: boolean;
+  fancyIntensity?: string;
+  fancyOvertone?: string;
+  primaryHue?: string;
+  overtone?: string;
+  colorOrigin?: string;
+  colorDistribution?: string;
 }
 
 export interface DiamondFilters {
@@ -127,4 +147,10 @@ export interface MatchedPairCandidate {
   lwDiff: number;
 }
 
-export type AppSection = 'catalog' | 'pair-finder' | 'compare' | 'alerts' | 'sheets';
+export type AppSection =
+  | 'catalog'
+  | 'fancy'
+  | 'pair-finder'
+  | 'compare'
+  | 'sheets'
+  | 'manager';

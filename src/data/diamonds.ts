@@ -5,6 +5,8 @@ import {
   DiamondColor,
   DiamondShape,
   PriceCurrency,
+  PricingConfig,
+  PricingMode,
 } from '../types/diamond';
 
 export const SHAPE_LABELS_RU: Record<DiamondShape, string> = {
@@ -71,6 +73,12 @@ export const ALL_CLARITIES: DiamondClarity[] = [
   'SI2',
 ];
 
+export const ALL_FANCY_CLARITIES: DiamondClarity[] = [
+  ...ALL_CLARITIES,
+  'I1',
+  'I2',
+];
+
 export const SHAPE_IMAGE_MAP: Record<DiamondShape, string> = {
   Round: '/src/assets/images/diamond_round_cut_1794842114159.jpg',
   Oval: '/src/assets/images/diamond_oval_cut_1794842114463.jpg',
@@ -89,6 +97,133 @@ export const SHAPE_IMAGE_MAP: Record<DiamondShape, string> = {
 };
 
 export const HERO_IMAGE_URL = '/src/assets/images/hero_diamond_atelier_1794842112919.jpg';
+
+export const FANCY_IMAGE_MAP = {
+  yellow: '/src/assets/images/fancy_yellow_diamond_1794909661015.jpg',
+  pink: '/src/assets/images/fancy_pink_diamond_1794909659648.jpg',
+  blue: '/src/assets/images/fancy_blue_diamond_1794909660380.jpg',
+  green: '/src/assets/images/fancy_green_diamond_1794909660879.jpg',
+  cognac: '/src/assets/images/fancy_cognac_diamond_1794909661225.jpg',
+} as const;
+
+export const FANCY_INTENSITIES = [
+  'Light',
+  'Fancy Light',
+  'Fancy',
+  'Fancy Intense',
+  'Fancy Vivid',
+  'Fancy Deep',
+  'Fancy Dark',
+] as const;
+
+export const FANCY_INTENSITY_RANK: Record<string, number> = {
+  Light: 1,
+  'Fancy Light': 2,
+  Fancy: 3,
+  'Fancy Intense': 4,
+  'Fancy Vivid': 5,
+  'Fancy Deep': 6,
+  'Fancy Dark': 6,
+};
+
+export const DEFAULT_PRICING_CONFIG: PricingConfig = {
+  mode: 'multiplier',
+  value: 1.25,
+  roundingStep: 10,
+  applyOnImport: true,
+};
+
+export function calculateClientPrice(
+  costPrice: number,
+  mode: PricingMode,
+  value: number,
+  roundingStep: number = 10
+): number {
+  const safeCost = Math.max(0, Number.isFinite(costPrice) ? costPrice : 0);
+  if (safeCost === 0) return 0;
+
+  const factor =
+    mode === 'multiplier'
+      ? Math.max(0.01, Number.isFinite(value) ? value : 1)
+      : Math.max(0.01, 1 + (Number.isFinite(value) ? value : 0) / 100);
+
+  const raw = safeCost * factor;
+  const step = roundingStep > 1 ? roundingStep : 1;
+  return Math.max(1, Math.round(raw / step) * step);
+}
+
+export function getEffectiveCostPrice(stone: Diamond): number {
+  if (typeof stone.costPriceUsd === 'number' && stone.costPriceUsd > 0) {
+    return stone.costPriceUsd;
+  }
+  return Math.max(1, Math.round((stone.priceUsd / DEFAULT_PRICING_CONFIG.value) / 10) * 10);
+}
+
+export function applyPricingToDiamond(
+  stone: Diamond,
+  config: PricingConfig
+): Diamond {
+  const costPriceUsd = getEffectiveCostPrice(stone);
+  const priceUsd = calculateClientPrice(
+    costPriceUsd,
+    config.mode,
+    config.value,
+    config.roundingStep
+  );
+  return {
+    ...stone,
+    costPriceUsd,
+    markupMode: config.mode,
+    markupValue: config.value,
+    priceUsd,
+  };
+}
+
+export function extractFancyIntensity(colorText: string): string {
+  const low = colorText.toLowerCase();
+  if (low.includes('fancy vivid') || low.includes('vivid')) return 'Fancy Vivid';
+  if (low.includes('fancy intense') || low.includes('intense')) return 'Fancy Intense';
+  if (low.includes('fancy deep') || low.includes('deep')) return 'Fancy Deep';
+  if (low.includes('fancy dark') || low.includes('dark')) return 'Fancy Dark';
+  if (low.includes('fancy light')) return 'Fancy Light';
+  if (low.includes('very light') || low.includes('faint') || low.includes('light')) return 'Light';
+  return 'Fancy';
+}
+
+export function extractFancyOvertone(colorText: string): string | undefined {
+  const low = colorText.toLowerCase();
+  if (low.includes('orangy') || low.includes('оранж')) return 'Оранжевый подтон';
+  if (low.includes('purplish') || low.includes('пурпур')) return 'Пурпурный подтон';
+  if (low.includes('greenish') || low.includes('зелен')) return 'Зеленоватый подтон';
+  if (low.includes('brownish') || low.includes('коричн')) return 'Коричневый подтон';
+  if (low.includes('grayish') || low.includes('серов')) return 'Серый подтон';
+  if (low.includes('yellowish') || low.includes('желт')) return 'Желтоватый подтон';
+  return undefined;
+}
+
+export function getFancyDiamondImage(
+  color: string,
+  colorFamily: string | undefined,
+  fallbackShape: DiamondShape
+): string {
+  const hay = `${color} ${colorFamily || ''}`.toLowerCase();
+  if (hay.includes('розов') || hay.includes('pink') || hay.includes('rose') || hay.includes('пурпур') || hay.includes('фиолет') || hay.includes('purple')) {
+    return FANCY_IMAGE_MAP.pink;
+  }
+  if (hay.includes('син') || hay.includes('голуб') || hay.includes('blue') || hay.includes('aqua')) {
+    return FANCY_IMAGE_MAP.blue;
+  }
+  if (hay.includes('зел') || hay.includes('green') || hay.includes('mint')) {
+    return FANCY_IMAGE_MAP.green;
+  }
+  if (hay.includes('жёлт') || hay.includes('желт') || hay.includes('yellow') || hay.includes('canary') || hay.includes('lemon')) {
+    return FANCY_IMAGE_MAP.yellow;
+  }
+  if (hay.includes('коньяч') || hay.includes('шампан') || hay.includes('корич') || hay.includes('brown') || hay.includes('champagne') || hay.includes('cognac') || hay.includes('оранж') || hay.includes('orange')) {
+    return FANCY_IMAGE_MAP.cognac;
+  }
+  return SHAPE_IMAGE_MAP[fallbackShape];
+}
 
 export function formatStonePrice(
   amount: number,
@@ -792,4 +927,359 @@ export const INITIAL_DIAMONDS: Diamond[] = [
     inStock: true,
     source: 'catalog',
   },
+];
+
+export const INITIAL_FANCY_DIAMONDS: Diamond[] = [
+  {
+    id: 'fc-001',
+    sku: 'FNC-RD-188FY',
+    stoneType: 'Цветной бриллиант',
+    shape: 'Radiant',
+    carat: 1.88,
+    color: 'Fancy Vivid Yellow',
+    colorFamily: 'Жёлтый',
+    fancyIntensity: 'Fancy Vivid',
+    clarity: 'VVS1',
+    cut: 'Excellent',
+    polish: 'Excellent',
+    symmetry: 'Excellent',
+    fluorescence: 'None',
+    depthPercent: 66.8,
+    tablePercent: 64.0,
+    crownAngle: 34.8,
+    pavilionAngle: 41.3,
+    girdle: 'Medium to Slightly Thick',
+    culet: 'None',
+    lengthMm: 7.45,
+    widthMm: 6.52,
+    depthMm: 4.35,
+    lwRatio: 1.14,
+    certLab: 'GIA',
+    certNumber: '2495102847',
+    certDate: '2026-10-12',
+    certUrl: getCertVerifyUrl('GIA', '2495102847'),
+    imageUrl: FANCY_IMAGE_MAP.yellow,
+    priceUsd: 48600,
+    currency: 'USD',
+    previousPriceUsd: 52000,
+    priceChangedAt: '2026-11-16T11:20:00Z',
+    origin: 'Антверпен',
+    inStock: true,
+    source: 'catalog',
+    directory: 'fancy',
+  },
+  {
+    id: 'fc-002',
+    sku: 'FNC-CU-132FIY',
+    stoneType: 'Цветной бриллиант',
+    shape: 'Cushion',
+    carat: 1.32,
+    color: 'Fancy Intense Yellow',
+    colorFamily: 'Жёлтый',
+    fancyIntensity: 'Fancy Intense',
+    clarity: 'VS1',
+    cut: 'Excellent',
+    polish: 'Excellent',
+    symmetry: 'Very Good',
+    fluorescence: 'None',
+    depthPercent: 65.4,
+    tablePercent: 60.0,
+    crownAngle: 35.1,
+    pavilionAngle: 41.4,
+    girdle: 'Medium',
+    culet: 'None',
+    lengthMm: 6.32,
+    widthMm: 6.18,
+    depthMm: 4.04,
+    lwRatio: 1.02,
+    certLab: 'GIA',
+    certNumber: '5248910322',
+    certDate: '2026-09-18',
+    certUrl: getCertVerifyUrl('GIA', '5248910322'),
+    imageUrl: FANCY_IMAGE_MAP.yellow,
+    priceUsd: 24900,
+    currency: 'USD',
+    origin: 'Женева',
+    inStock: true,
+    source: 'catalog',
+    directory: 'fancy',
+  },
+  {
+    id: 'fc-003',
+    sku: 'FNC-CU-130FIY',
+    stoneType: 'Цветной бриллиант',
+    shape: 'Cushion',
+    carat: 1.30,
+    color: 'Fancy Intense Yellow',
+    colorFamily: 'Жёлтый',
+    fancyIntensity: 'Fancy Intense',
+    clarity: 'VS2',
+    cut: 'Excellent',
+    polish: 'Excellent',
+    symmetry: 'Excellent',
+    fluorescence: 'None',
+    depthPercent: 65.1,
+    tablePercent: 59.5,
+    crownAngle: 35.0,
+    pavilionAngle: 41.3,
+    girdle: 'Medium',
+    culet: 'None',
+    lengthMm: 6.29,
+    widthMm: 6.15,
+    depthMm: 4.00,
+    lwRatio: 1.02,
+    certLab: 'GIA',
+    certNumber: '5248910340',
+    certDate: '2026-09-18',
+    certUrl: getCertVerifyUrl('GIA', '5248910340'),
+    imageUrl: FANCY_IMAGE_MAP.yellow,
+    priceUsd: 23800,
+    currency: 'USD',
+    origin: 'Женева',
+    inStock: true,
+    source: 'catalog',
+    directory: 'fancy',
+  },
+  {
+    id: 'fc-004',
+    sku: 'FNC-PR-092FIP',
+    stoneType: 'Цветной бриллиант',
+    shape: 'Pear',
+    carat: 0.92,
+    color: 'Fancy Intense Pink',
+    colorFamily: 'Розовый',
+    fancyIntensity: 'Fancy Intense',
+    clarity: 'VS1',
+    cut: 'Excellent',
+    polish: 'Excellent',
+    symmetry: 'Very Good',
+    fluorescence: 'Faint',
+    depthPercent: 62.4,
+    tablePercent: 58.0,
+    crownAngle: 34.4,
+    pavilionAngle: 40.9,
+    girdle: 'Thin to Medium',
+    culet: 'None',
+    lengthMm: 8.18,
+    widthMm: 5.34,
+    depthMm: 3.33,
+    lwRatio: 1.53,
+    certLab: 'GIA',
+    certNumber: '6498123401',
+    certDate: '2026-10-25',
+    certUrl: getCertVerifyUrl('GIA', '6498123401'),
+    imageUrl: FANCY_IMAGE_MAP.pink,
+    priceUsd: 96500,
+    currency: 'USD',
+    origin: 'Аргайл / Антверпен',
+    inStock: true,
+    source: 'catalog',
+    directory: 'fancy',
+  },
+  {
+    id: 'fc-005',
+    sku: 'FNC-HS-078FOP',
+    stoneType: 'Цветной бриллиант',
+    shape: 'Heart',
+    carat: 0.78,
+    color: 'Fancy Orangy Pink',
+    colorFamily: 'Розовый',
+    fancyIntensity: 'Fancy',
+    fancyOvertone: 'Оранжевый подтон',
+    clarity: 'VVS2',
+    cut: 'Excellent',
+    polish: 'Excellent',
+    symmetry: 'Excellent',
+    fluorescence: 'None',
+    depthPercent: 60.5,
+    tablePercent: 58.0,
+    crownAngle: 34.1,
+    pavilionAngle: 40.7,
+    girdle: 'Medium',
+    culet: 'None',
+    lengthMm: 5.88,
+    widthMm: 6.42,
+    depthMm: 3.88,
+    lwRatio: 0.92,
+    certLab: 'GIA',
+    certNumber: '2497220194',
+    certDate: '2026-10-09',
+    certUrl: getCertVerifyUrl('GIA', '2497220194'),
+    imageUrl: FANCY_IMAGE_MAP.pink,
+    priceUsd: 64200,
+    currency: 'USD',
+    previousPriceUsd: 68900,
+    priceChangedAt: '2026-11-16T15:10:00Z',
+    origin: 'Женева',
+    inStock: true,
+    source: 'catalog',
+    directory: 'fancy',
+  },
+  {
+    id: 'fc-006',
+    sku: 'FNC-EM-115FDB',
+    stoneType: 'Цветной бриллиант',
+    shape: 'Emerald',
+    carat: 1.15,
+    color: 'Fancy Deep Blue',
+    colorFamily: 'Синий / Голубой',
+    fancyIntensity: 'Fancy Deep',
+    clarity: 'IF',
+    cut: 'Step',
+    polish: 'Excellent',
+    symmetry: 'Excellent',
+    fluorescence: 'None',
+    depthPercent: 65.8,
+    tablePercent: 63.0,
+    crownAngle: 33.9,
+    pavilionAngle: 41.1,
+    girdle: 'Medium',
+    culet: 'None',
+    lengthMm: 7.04,
+    widthMm: 5.12,
+    depthMm: 3.37,
+    lwRatio: 1.38,
+    certLab: 'GIA',
+    certNumber: '1499801234',
+    certDate: '2026-11-01',
+    certUrl: getCertVerifyUrl('GIA', '1499801234'),
+    imageUrl: FANCY_IMAGE_MAP.blue,
+    priceUsd: 138000,
+    currency: 'USD',
+    origin: 'Цюрих',
+    inStock: true,
+    source: 'catalog',
+    directory: 'fancy',
+  },
+  {
+    id: 'fc-007',
+    sku: 'FNC-AS-104FIG',
+    stoneType: 'Цветной бриллиант',
+    shape: 'Asscher',
+    carat: 1.04,
+    color: 'Fancy Intense Green',
+    colorFamily: 'Зелёный',
+    fancyIntensity: 'Fancy Intense',
+    clarity: 'VS2',
+    cut: 'Step',
+    polish: 'Excellent',
+    symmetry: 'Excellent',
+    fluorescence: 'Faint',
+    depthPercent: 67.2,
+    tablePercent: 61.0,
+    crownAngle: 34.5,
+    pavilionAngle: 41.4,
+    girdle: 'Medium',
+    culet: 'None',
+    lengthMm: 5.68,
+    widthMm: 5.64,
+    depthMm: 3.79,
+    lwRatio: 1.01,
+    certLab: 'GIA',
+    certNumber: '3491882011',
+    certDate: '2026-09-29',
+    certUrl: getCertVerifyUrl('GIA', '3491882011'),
+    imageUrl: FANCY_IMAGE_MAP.green,
+    priceUsd: 89000,
+    currency: 'USD',
+    origin: 'Антверпен',
+    inStock: true,
+    source: 'catalog',
+    directory: 'fancy',
+  },
+  {
+    id: 'fc-008',
+    sku: 'FNC-OV-225FCG',
+    stoneType: 'Цветной бриллиант',
+    shape: 'Oval',
+    carat: 2.25,
+    color: 'Fancy Deep Brownish Yellow (Cognac)',
+    colorFamily: 'Коньячный / Шампань',
+    fancyIntensity: 'Fancy Deep',
+    fancyOvertone: 'Коричневый подтон',
+    clarity: 'VVS2',
+    cut: 'Excellent',
+    polish: 'Excellent',
+    symmetry: 'Excellent',
+    fluorescence: 'None',
+    depthPercent: 62.6,
+    tablePercent: 58.0,
+    crownAngle: 34.9,
+    pavilionAngle: 40.9,
+    girdle: 'Medium',
+    culet: 'None',
+    lengthMm: 10.34,
+    widthMm: 7.42,
+    depthMm: 4.64,
+    lwRatio: 1.39,
+    certLab: 'IGI',
+    certNumber: '642819044',
+    certDate: '2026-10-14',
+    certUrl: getCertVerifyUrl('IGI', '642819044'),
+    imageUrl: FANCY_IMAGE_MAP.cognac,
+    priceUsd: 16400,
+    currency: 'USD',
+    previousPriceUsd: 18100,
+    priceChangedAt: '2026-11-16T08:40:00Z',
+    origin: 'Антверпен',
+    inStock: true,
+    source: 'catalog',
+    directory: 'fancy',
+  },
+  {
+    id: 'fc-009',
+    sku: 'FNC-TR-088FBY',
+    stoneType: 'Цветной бриллиант',
+    shape: 'Trilliant',
+    carat: 0.88,
+    color: 'Fancy Light Yellow',
+    colorFamily: 'Жёлтый',
+    fancyIntensity: 'Fancy Light',
+    clarity: 'VVS1',
+    cut: 'Ideal',
+    polish: 'Excellent',
+    symmetry: 'Excellent',
+    fluorescence: 'None',
+    depthPercent: 52.4,
+    tablePercent: 61.5,
+    crownAngle: 33.8,
+    pavilionAngle: 40.5,
+    girdle: 'Medium',
+    culet: 'None',
+    lengthMm: 6.45,
+    widthMm: 6.48,
+    depthMm: 3.40,
+    lwRatio: 1.0,
+    certLab: 'HRD',
+    certNumber: '260008471102',
+    certDate: '2026-10-21',
+    certUrl: getCertVerifyUrl('HRD', '260008471102'),
+    imageUrl: FANCY_IMAGE_MAP.yellow,
+    priceUsd: 6950,
+    currency: 'USD',
+    origin: 'Антверпен',
+    inStock: true,
+    source: 'catalog',
+    directory: 'fancy',
+  },
+];
+
+export const ALL_INITIAL_DIAMONDS: Diamond[] = [
+  ...INITIAL_DIAMONDS.map((d) => ({
+    ...d,
+    costPriceUsd: Math.round((d.priceUsd / DEFAULT_PRICING_CONFIG.value) / 10) * 10,
+    markupMode: DEFAULT_PRICING_CONFIG.mode,
+    markupValue: DEFAULT_PRICING_CONFIG.value,
+  })),
+  ...INITIAL_FANCY_DIAMONDS.map((d) => ({
+    ...d,
+    isFancyColor: true,
+    primaryHue: d.colorFamily,
+    overtone: d.fancyOvertone,
+    colorOrigin: 'Natural',
+    colorDistribution: 'Even',
+    costPriceUsd: Math.round((d.priceUsd / DEFAULT_PRICING_CONFIG.value) / 10) * 10,
+    markupMode: DEFAULT_PRICING_CONFIG.mode,
+    markupValue: DEFAULT_PRICING_CONFIG.value,
+  })),
 ];

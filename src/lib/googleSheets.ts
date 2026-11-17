@@ -6,6 +6,7 @@ import {
 import {
   Diamond,
   PriceDropNotification,
+  PricingConfig,
 } from '../types/diamond';
 
 export interface SheetTabInfo {
@@ -83,7 +84,8 @@ export async function fetchSpreadsheetMeta(
 export async function readDiamondsFromSheet(
   accessToken: string,
   spreadsheetId: string,
-  sheetTitle: string
+  sheetTitle: string,
+  pricingConfig?: PricingConfig
 ): Promise<{ diamonds: Diamond[]; rawRowCount: number }> {
   const encodedRange = encodeURIComponent(`'${sheetTitle.replace(/'/g, "''")}'!A1:Z500`);
   const res = await fetch(
@@ -108,7 +110,9 @@ export async function readDiamondsFromSheet(
 
   const headerRowIdx = detectHeaderRowIndex(rows);
   const { mapping } = analyzeColumns(rows, headerRowIdx);
-  const { diamonds } = mapRowsToDiamonds(rows, mapping, 'sheets', headerRowIdx);
+  const { diamonds } = mapRowsToDiamonds(rows, mapping, 'sheets', headerRowIdx, {
+    pricingConfig,
+  });
 
   return { diamonds, rawRowCount: Math.max(0, rows.length - headerRowIdx - 1) };
 }
@@ -120,8 +124,14 @@ export function diamondsToSheetRows(diamonds: Diamond[]): string[][] {
     'Shape',
     'Carat',
     'Color',
+    'Fancy_Intensity',
+    'Primary_Hue',
+    'Overtone',
+    'Color_Origin',
+    'Color_Distribution',
     'Color_Family',
     'Clarity',
+    'Fluorescence',
     'Cut',
     'Price',
     'Currency',
@@ -142,8 +152,14 @@ export function diamondsToSheetRows(diamonds: Diamond[]): string[][] {
     d.shape,
     d.carat.toFixed(2),
     d.color,
+    d.fancyIntensity || '',
+    d.primaryHue || '',
+    d.overtone || '',
+    d.colorOrigin || '',
+    d.colorDistribution || '',
     d.colorFamily || '',
     d.clarity,
+    d.fluorescence || 'None',
     d.cut,
     String(d.priceUsd),
     d.currency || 'USD',

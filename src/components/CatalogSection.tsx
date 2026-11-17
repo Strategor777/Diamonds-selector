@@ -4,7 +4,6 @@ import {
   RotateCcw,
   Search,
   SlidersHorizontal,
-  TrendingDown,
 } from 'lucide-react';
 import {
   ALL_CLARITIES,
@@ -29,6 +28,8 @@ interface CatalogSectionProps {
   diamonds: Diamond[];
   catalog: Diamond[];
   totalCount: number;
+  fancyCount?: number;
+  onGoToFancy?: () => void;
   filters: DiamondFilters;
   onChangeFilters: React.Dispatch<React.SetStateAction<DiamondFilters>>;
   onResetFilters: () => void;
@@ -45,6 +46,8 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
   diamonds,
   catalog,
   totalCount,
+  fancyCount = 0,
+  onGoToFancy,
   filters,
   onChangeFilters,
   onResetFilters,
@@ -571,24 +574,6 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
                 ))}
               </div>
             </div>
-
-            <button
-              type="button"
-              onClick={() =>
-                onChangeFilters((prev) => ({
-                  ...prev,
-                  onlyPriceDrops: !prev.onlyPriceDrops,
-                }))
-              }
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border transition-colors whitespace-nowrap ${
-                filters.onlyPriceDrops
-                  ? 'bg-[#ECFDF5] border-[#0F5132] text-[#0F5132]'
-                  : 'bg-white border-[#D5D9E0] text-[#5A606D] hover:text-[#111317]'
-              }`}
-            >
-              <TrendingDown className="w-3.5 h-3.5" />
-              Только со снижением цены
-            </button>
           </div>
 
           <div className="flex items-center gap-3">
@@ -610,14 +595,32 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
               <option value="price-desc">Цена: по убыванию</option>
               <option value="carat-desc">Вес: от большего к меньшему</option>
               <option value="carat-asc">Вес: от меньшего к большему</option>
-              <option value="drop-desc">Сначала максимальное снижение цены</option>
             </select>
           </div>
         </div>
       </div>
 
       {/* Results Grid */}
-      {diamonds.length === 0 ? (
+      {totalCount === 0 && fancyCount > 0 ? (
+        <div className="bg-white border border-[#E4E6EB] rounded-xl p-12 text-center space-y-3">
+          <h3 className="text-xl font-semibold text-[#111317]">
+            Все загруженные камни ({fancyCount}) — цветные бриллианты
+          </h3>
+          <p className="text-sm text-[#5A606D] max-w-md mx-auto">
+            Для них выделен специализированный раздел с фильтрами по интенсивности
+            окраски (Faint–Vivid), тону, обертону и флуоресценции.
+          </p>
+          {onGoToFancy && (
+            <button
+              type="button"
+              onClick={onGoToFancy}
+              className="inline-flex items-center gap-1.5 px-5 py-2.5 text-xs font-medium rounded-lg bg-[#1B365D] text-white hover:bg-[#142947] transition-colors"
+            >
+              Перейти в раздел «Цветные бриллианты» ({fancyCount})
+            </button>
+          )}
+        </div>
+      ) : diamonds.length === 0 ? (
         <div className="bg-white border border-[#E4E6EB] rounded-xl p-12 text-center space-y-3">
           <h3 className="text-xl font-semibold text-[#111317]">
             По выбранным фильтрам камни не найдены

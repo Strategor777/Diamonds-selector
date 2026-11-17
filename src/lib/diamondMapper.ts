@@ -2,8 +2,13 @@ import {
   ALL_CLARITIES,
   ALL_COLORS,
   ALL_SHAPES,
+  DEFAULT_PRICING_CONFIG,
   SHAPE_IMAGE_MAP,
+  calculateClientPrice,
+  extractFancyIntensity,
+  extractFancyOvertone,
   getCertVerifyUrl,
+  getFancyDiamondImage,
 } from '../data/diamonds';
 import {
   CertLab,
@@ -12,6 +17,7 @@ import {
   DiamondColor,
   DiamondShape,
   PriceCurrency,
+  PricingConfig,
 } from '../types/diamond';
 
 export interface ColumnMapping {
@@ -725,11 +731,18 @@ function detectCurrency(
   return 'USD';
 }
 
+export interface MapRowsOptions {
+  defaultDirectory?: 'white' | 'fancy';
+  defaultStoneType?: string;
+  pricingConfig?: PricingConfig;
+}
+
 export function mapRowsToDiamonds(
   rows: string[][],
   mapping: ColumnMapping,
   source: 'sheets' | 'xlsx',
-  headerRowIndex = 0
+  headerRowIndex = 0,
+  options?: MapRowsOptions
 ): { diamonds: Diamond[]; skippedRows: number } {
   if (rows.length <= headerRowIndex + 1) {
     return { diamonds: [], skippedRows: 0 };
@@ -760,25 +773,55 @@ export function mapRowsToDiamonds(
       continue;
     }
 
-    const stoneType = cell(row, mapping.stoneType) || undefined;
+    const stoneType =
+      cell(row, mapping.stoneType) || options?.defaultStoneType || undefined;
     const shape = normalizeShape(cell(row, mapping.shape));
     const { color, colorFamily } = normalizeColoredStoneColor(
       cell(row, mapping.color),
       cell(row, mapping.fancyColor)
     );
     const clarity = normalizeClarity(cell(row, mapping.clarity));
+    const isColored = colorFamily !== 'Бесцветный (D–J)';
+    const isDiamondOrUnspecified =
+      !stoneType ||
+      stoneType.toLowerCase().includes('бриллиант') ||
+      stoneType.toLowerCase().includes('diamond');
+    const directory: Diamond['directory'] =
+      options?.defaultDirectory ??
+      (isColored && isDiamondOrUnspecified ? 'fancy' : 'white');
+    const fancyIntensity =
+      directory === 'fancy' || (isColored && isDiamondOrUnspecified)
+        ? extractFancyIntensity(color)
+        : undefined;
+    const fancyOvertone =
+      directory === 'fancy' || (isColored && isDiamondOrUnspecified)
+        ? extractFancyOvertone(color)
+        : undefined;
 
     const rawPriceText = cell(row, mapping.priceUsd) || cell(row, mapping.pricePerCarat);
     const currency = detectCurrency(priceHeader, rawPriceText);
 
     const totalPriceRaw = parseNumeric(cell(row, mapping.priceUsd), 0);
     const ppcRaw = parseNumeric(cell(row, mapping.pricePerCarat), 0);
-    const priceUsd =
+    const costPriceUsd =
       totalPriceRaw > 0
         ? Math.round(totalPriceRaw)
         : ppcRaw > 0
           ? Math.round(ppcRaw * carat)
           : Math.round(carat * 4500);
+
+    const activePricing = options?.pricingConfig || DEFAULT_PRICING_CONFIG;
+    const useMarkup = activePricing.applyOnImport;
+    const markupMode = useMarkup ? activePricing.mode : 'multiplier';
+    const markupValue = useMarkup ? activePricing.value : 1;
+    const priceUsd = useMarkup
+      ? calculateClientPrice(
+          costPriceUsd,
+          activePricing.mode,
+          activePricing.value,
+          activePricing.roundingStep
+        )
+      : costPriceUsd;
 
     const prevRaw = parseNumeric(cell(row, mapping.previousPriceUsd), 0);
     const previousPriceUsd = prevRaw > priceUsd ? Math.round(prevRaw) : undefined;
@@ -904,8 +947,15 @@ export function mapRowsToDiamonds(
       certNumber,
       certDate: new Date().toISOString().slice(0, 10),
       certUrl,
-      imageUrl: rawPhoto || SHAPE_IMAGE_MAP[shape],
+      imageUrl:
+        rawPhoto ||
+        (directory === 'fancy' || isColored
+          ? getFancyDiamondImage(color, colorFamily, shape)
+          : SHAPE_IMAGE_MAP[shape]),
       videoUrl: rawVideo,
+      costPriceUsd,
+      markupMode,
+      markupValue,
       priceUsd,
       currency,
       previousPriceUsd,
@@ -915,6 +965,14 @@ export function mapRowsToDiamonds(
         (source === 'xlsx' ? 'Файл .xlsx' : 'Google Sheets'),
       inStock: true,
       source,
+      directory,
+      isFancyColor: directory === 'fancy',
+      fancyIntensity,
+      fancyOvertone,
+      primaryHue: directory === 'fancy' ? colorFamily : undefined,
+      overtone: fancyOvertone,
+      colorOrigin: directory === 'fancy' ? 'Natural' : undefined,
+      colorDistribution: directory === 'fancy' ? 'Even' : undefined,
     });
   }
 
