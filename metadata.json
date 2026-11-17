@@ -1,0 +1,6 @@
+{
+  "name": "Diamonds Selector",
+  "description": "Каталог сертифицированных бриллиантов с фильтрацией, 360° видео, сертификатами GIA/IGI, сравнением камней, подбором пар, мгновенными уведомлениями о снижении цен и интеграцией Google Таблиц.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
