@@ -3,6 +3,22 @@ import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 
+// Recover automatically if a stale tab requests a chunk hash from an older deploy
+if (typeof window !== 'undefined') {
+  window.addEventListener('vite:preloadError', (event) => {
+    try {
+      const key = 'vite_preload_reloaded';
+      if (!window.sessionStorage.getItem(key)) {
+        event.preventDefault();
+        window.sessionStorage.setItem(key, '1');
+        window.location.reload();
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  });
+}
+
 interface ErrorBoundaryState {
   hasError: boolean;
   message: string;

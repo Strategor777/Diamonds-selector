@@ -8,6 +8,8 @@ import {
 } from 'lucide-react';
 import { CatalogSection } from './components/CatalogSection';
 import { GoogleSignInButton } from './components/GoogleSignInButton';
+import { ManagerCabinetView } from './components/ManagerCabinetView';
+import { ManagerPasswordGate } from './components/ManagerPasswordGate';
 import {
   ALL_INITIAL_DIAMONDS,
   DEFAULT_PRICING_CONFIG,
@@ -29,52 +31,160 @@ import {
   PricingConfig,
 } from './types/diamond';
 
+// Resilient dynamic import helper that retries once before triggering a safe reload on stale chunks
+function lazyWithRetry<T extends React.ComponentType<any>>(
+  importer: () => Promise<{ default: T }>,
+  chunkKey: string
+) {
+  return lazy(async () => {
+    try {
+      const mod = await importer();
+      try {
+        window.sessionStorage.removeItem(`chunk_retry_${chunkKey}`);
+      } catch {
+        // ignore storage restrictions
+      }
+      return mod;
+    } catch (firstErr) {
+      try {
+        await new Promise((r) => window.setTimeout(r, 250));
+        return await importer();
+      } catch (secondErr) {
+        if (typeof window !== 'undefined') {
+          try {
+            const flag = `chunk_retry_${chunkKey}`;
+            if (!window.sessionStorage.getItem(flag)) {
+              window.sessionStorage.setItem(flag, '1');
+              window.location.reload();
+              return new Promise<{ default: T }>(() => {});
+            }
+          } catch {
+            // ignore storage errors
+          }
+        }
+        throw secondErr || firstErr;
+      }
+    }
+  });
+}
+
 // Route & modal-level code splitting to keep initial bundle lean and fast
-const FancyDiamondsView = lazy(() =>
-  import('./components/FancyDiamondsView').then((m) => ({
-    default: m.FancyDiamondsView,
-  }))
+const FancyDiamondsView = lazyWithRetry(
+  () =>
+    import('./components/FancyDiamondsView').then((m) => ({
+      default: m.FancyDiamondsView,
+    })),
+  'fancy'
 );
-const PairFinderView = lazy(() =>
-  import('./components/PairFinderView').then((m) => ({
-    default: m.PairFinderView,
-  }))
+const PairFinderView = lazyWithRetry(
+  () =>
+    import('./components/PairFinderView').then((m) => ({
+      default: m.PairFinderView,
+    })),
+  'pair-finder'
 );
-const CompareView = lazy(() =>
-  import('./components/CompareView').then((m) => ({
-    default: m.CompareView,
-  }))
+const CompareView = lazyWithRetry(
+  () =>
+    import('./components/CompareView').then((m) => ({
+      default: m.CompareView,
+    })),
+  'compare'
 );
-const CartView = lazy(() =>
-  import('./components/CartView').then((m) => ({
-    default: m.CartView,
-  }))
+const CartView = lazyWithRetry(
+  () =>
+    import('./components/CartView').then((m) => ({
+      default: m.CartView,
+    })),
+  'cart'
 );
-const GoogleSheetsWorkspace = lazy(() =>
-  import('./components/GoogleSheetsWorkspace').then((m) => ({
-    default: m.GoogleSheetsWorkspace,
-  }))
+const GoogleSheetsWorkspace = lazyWithRetry(
+  () =>
+    import('./components/GoogleSheetsWorkspace').then((m) => ({
+      default: m.GoogleSheetsWorkspace,
+    })),
+  'sheets'
 );
-const ManagerCabinetView = lazy(() =>
-  import('./components/ManagerCabinetView').then((m) => ({
-    default: m.ManagerCabinetView,
-  }))
+const DiamondDetailModal = lazyWithRetry(
+  () =>
+    import('./components/DiamondDetailModal').then((m) => ({
+      default: m.DiamondDetailModal,
+    })),
+  'detail-modal'
 );
-const ManagerPasswordGate = lazy(() =>
-  import('./components/ManagerPasswordGate').then((m) => ({
-    default: m.ManagerPasswordGate,
-  }))
+const ExcelImportModal = lazyWithRetry(
+  () =>
+    import('./components/ExcelImportModal').then((m) => ({
+      default: m.ExcelImportModal,
+    })),
+  'excel-modal'
 );
-const DiamondDetailModal = lazy(() =>
-  import('./components/DiamondDetailModal').then((m) => ({
-    default: m.DiamondDetailModal,
-  }))
-);
-const ExcelImportModal = lazy(() =>
-  import('./components/ExcelImportModal').then((m) => ({
-    default: m.ExcelImportModal,
-  }))
-);
+
+interface SectionErrorBoundaryProps {
+  resetKey: string;
+  children: React.ReactNode;
+}
+
+interface SectionErrorBoundaryState {
+  hasError: boolean;
+  message: string;
+}
+
+class SectionErrorBoundary extends React.Component<
+  SectionErrorBoundaryProps,
+  SectionErrorBoundaryState
+> {
+  constructor(props: SectionErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, message: '' };
+  }
+
+  static getDerivedStateFromError(error: Error): SectionErrorBoundaryState {
+    return {
+      hasError: true,
+      message: error?.message || 'Не удалось загрузить раздел.',
+    };
+  }
+
+  componentDidUpdate(prevProps: SectionErrorBoundaryProps) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false, message: '' });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="max-w-7xl mx-auto px-6 py-16">
+          <div className="max-w-lg mx-auto bg-white border border-[#E4E6EB] rounded-xl p-8 text-center space-y-4">
+            <h2 className="text-lg font-semibold text-[#111317]">
+              Не удалось загрузить раздел
+            </h2>
+            <p className="text-xs text-[#5A606D] leading-relaxed">
+              {this.state.message}
+            </p>
+            <div className="flex items-center justify-center gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => this.setState({ hasError: false, message: '' })}
+                className="px-4 py-2 text-xs font-medium rounded-lg border border-[#D5D9E0] bg-white text-[#111317] hover:bg-[#F7F8FA]"
+              >
+                Повторить
+              </button>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="px-4 py-2 text-xs font-medium rounded-lg bg-[#1B365D] text-white hover:bg-[#142947]"
+              >
+                Обновить страницу
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const SectionFallback = () => (
   <div className="max-w-7xl mx-auto px-6 py-16">
@@ -755,100 +865,7 @@ export default function App() {
           </>
         )}
 
-        <Suspense fallback={<SectionFallback />}>
-          {activeSection === 'fancy' && (
-            <>
-              {importBanner && (
-                <div className="max-w-7xl mx-auto px-6 pt-6">
-                  <div className="p-3.5 rounded-lg bg-[#ECFDF5] border border-[#A7F3D0] text-xs text-[#065F46] flex items-center justify-between gap-3">
-                    <span>{importBanner}</span>
-                    <button
-                      type="button"
-                      onClick={() => setImportBanner(null)}
-                      aria-label="Скрыть уведомление"
-                      className="text-[#065F46] hover:text-[#043927]"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              )}
-              <FancyDiamondsView
-                diamonds={fancyDiamonds}
-                comparedIds={comparedIds}
-                cartIds={cartIds}
-                watchedDiamondIds={watchedDiamondIds}
-                onInspect={handleInspect}
-                onToggleCompare={handleToggleCompare}
-                onToggleCart={handleToggleCart}
-                onFindPair={handleFindPair}
-                onToggleWatch={handleToggleWatchDiamond}
-                onGoToPairFinder={() => {
-                  const firstFancy = fancyDiamonds[0];
-                  if (firstFancy) setPairAnchorId(firstFancy.id);
-                  setActiveSection('pair-finder');
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-              />
-            </>
-          )}
-
-          {activeSection === 'pair-finder' && (
-            <PairFinderView
-              catalog={catalog}
-              initialAnchorId={pairAnchorId}
-              comparedIds={comparedIds}
-              onInspect={handleInspect}
-              onComparePair={handleComparePair}
-              onExportPairToSheets={handleExportToSheets}
-            />
-          )}
-
-          {activeSection === 'compare' && (
-            <CompareView
-              diamonds={comparedDiamonds}
-              onRemove={(id) =>
-                setComparedIds((prev) => prev.filter((item) => item !== id))
-              }
-              onClearAll={() => setComparedIds([])}
-              onInspect={handleInspect}
-              onFindPair={handleFindPair}
-              onExportSheets={handleExportToSheets}
-              onGoToCatalog={() => setActiveSection('catalog')}
-            />
-          )}
-
-          {activeSection === 'cart' && (
-            <CartView
-              diamonds={cartDiamonds}
-              submittedOrders={submittedOrders}
-              onRemove={(id) =>
-                setCartIds((prev) => prev.filter((item) => item !== id))
-              }
-              onClearCart={() => setCartIds([])}
-              onInspect={handleInspect}
-              onSubmitOrder={handleSubmitOrder}
-              onGoToCatalog={() => setActiveSection('catalog')}
-            />
-          )}
-
-          {activeSection === 'sheets' && (
-            <GoogleSheetsWorkspace
-              user={user}
-              accessToken={accessToken}
-              isLoggingIn={isLoggingIn}
-              onLogin={handleGoogleLogin}
-              onLogout={handleGoogleLogout}
-              catalog={catalog}
-              comparedDiamonds={comparedDiamonds}
-              notifications={[]}
-              pricingConfig={pricingConfig}
-              customExportBatch={customExportBatch}
-              onClearCustomBatch={() => setCustomExportBatch(null)}
-              onImportDiamonds={handleImportFromSheets}
-            />
-          )}
-
+        <SectionErrorBoundary resetKey={`${activeSection}-${isManagerUnlocked}`}>
           {activeSection === 'manager' &&
             (isManagerUnlocked ? (
               <>
@@ -890,7 +907,102 @@ export default function App() {
                 onCancel={() => setActiveSection('catalog')}
               />
             ))}
-        </Suspense>
+
+          <Suspense fallback={<SectionFallback />}>
+            {activeSection === 'fancy' && (
+              <>
+                {importBanner && (
+                  <div className="max-w-7xl mx-auto px-6 pt-6">
+                    <div className="p-3.5 rounded-lg bg-[#ECFDF5] border border-[#A7F3D0] text-xs text-[#065F46] flex items-center justify-between gap-3">
+                      <span>{importBanner}</span>
+                      <button
+                        type="button"
+                        onClick={() => setImportBanner(null)}
+                        aria-label="Скрыть уведомление"
+                        className="text-[#065F46] hover:text-[#043927]"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <FancyDiamondsView
+                  diamonds={fancyDiamonds}
+                  comparedIds={comparedIds}
+                  cartIds={cartIds}
+                  watchedDiamondIds={watchedDiamondIds}
+                  onInspect={handleInspect}
+                  onToggleCompare={handleToggleCompare}
+                  onToggleCart={handleToggleCart}
+                  onFindPair={handleFindPair}
+                  onToggleWatch={handleToggleWatchDiamond}
+                  onGoToPairFinder={() => {
+                    const firstFancy = fancyDiamonds[0];
+                    if (firstFancy) setPairAnchorId(firstFancy.id);
+                    setActiveSection('pair-finder');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                />
+              </>
+            )}
+
+            {activeSection === 'pair-finder' && (
+              <PairFinderView
+                catalog={catalog}
+                initialAnchorId={pairAnchorId}
+                comparedIds={comparedIds}
+                onInspect={handleInspect}
+                onComparePair={handleComparePair}
+                onExportPairToSheets={handleExportToSheets}
+              />
+            )}
+
+            {activeSection === 'compare' && (
+              <CompareView
+                diamonds={comparedDiamonds}
+                onRemove={(id) =>
+                  setComparedIds((prev) => prev.filter((item) => item !== id))
+                }
+                onClearAll={() => setComparedIds([])}
+                onInspect={handleInspect}
+                onFindPair={handleFindPair}
+                onExportSheets={handleExportToSheets}
+                onGoToCatalog={() => setActiveSection('catalog')}
+              />
+            )}
+
+            {activeSection === 'cart' && (
+              <CartView
+                diamonds={cartDiamonds}
+                submittedOrders={submittedOrders}
+                onRemove={(id) =>
+                  setCartIds((prev) => prev.filter((item) => item !== id))
+                }
+                onClearCart={() => setCartIds([])}
+                onInspect={handleInspect}
+                onSubmitOrder={handleSubmitOrder}
+                onGoToCatalog={() => setActiveSection('catalog')}
+              />
+            )}
+
+            {activeSection === 'sheets' && (
+              <GoogleSheetsWorkspace
+                user={user}
+                accessToken={accessToken}
+                isLoggingIn={isLoggingIn}
+                onLogin={handleGoogleLogin}
+                onLogout={handleGoogleLogout}
+                catalog={catalog}
+                comparedDiamonds={comparedDiamonds}
+                notifications={[]}
+                pricingConfig={pricingConfig}
+                customExportBatch={customExportBatch}
+                onClearCustomBatch={() => setCustomExportBatch(null)}
+                onImportDiamonds={handleImportFromSheets}
+              />
+            )}
+          </Suspense>
+        </SectionErrorBoundary>
       </main>
 
       {/* Compact Comparison Tray on Catalog & Fancy Views */}

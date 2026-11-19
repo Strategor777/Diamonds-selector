@@ -118,12 +118,12 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
       if (directoryFilter === 'white' && isFancyStone(d)) continue;
       if (
         q &&
-        !d.sku.toLowerCase().includes(q) &&
-        !d.certNumber.toLowerCase().includes(q) &&
-        !d.color.toLowerCase().includes(q) &&
+        !(d.sku || '').toLowerCase().includes(q) &&
+        !(d.certNumber || '').toLowerCase().includes(q) &&
+        !(d.color || '').toLowerCase().includes(q) &&
         !(d.stoneType || '').toLowerCase().includes(q) &&
-        !SHAPE_SHORT_RU[d.shape].toLowerCase().includes(q) &&
-        !d.origin.toLowerCase().includes(q)
+        !(SHAPE_SHORT_RU[d.shape] || d.shape || '').toLowerCase().includes(q) &&
+        !(d.origin || '').toLowerCase().includes(q)
       ) {
         continue;
       }
@@ -766,12 +766,12 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
 
                       <td className="p-3.5">
                         <div className="font-medium text-[#111317]">
-                          {SHAPE_SHORT_RU[d.shape]} {d.carat.toFixed(2)} ct · {d.color} ·{' '}
-                          {d.clarity}
+                          {SHAPE_SHORT_RU[d.shape] || d.shape} {Number(d.carat || 0).toFixed(2)} ct · {d.color || '—'} ·{' '}
+                          {d.clarity || '—'}
                         </div>
                         <div className="text-[11px] font-mono tabular-nums text-[#5A606D] mt-0.5">
-                          {d.lengthMm.toFixed(2)}×{d.widthMm.toFixed(2)} мм · {d.certLab} #
-                          {d.certNumber}
+                          {Number(d.lengthMm || 0).toFixed(2)}×{Number(d.widthMm || 0).toFixed(2)} мм · {d.certLab || '—'} #
+                          {d.certNumber || '—'}
                         </div>
                       </td>
 
