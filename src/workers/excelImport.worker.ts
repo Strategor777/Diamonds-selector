@@ -42,6 +42,9 @@ export type WorkerInboundMessage =
 
 export type WorkerOutboundMessage =
   | {
+      type: 'ready';
+    }
+  | {
       type: 'parsed';
       fileName: string;
       sheets: SheetSummary[];
@@ -226,3 +229,6 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
     self.postMessage(errorMsg);
   }
 };
+
+const readyMsg: WorkerOutboundMessage = { type: 'ready' };
+self.postMessage(readyMsg);

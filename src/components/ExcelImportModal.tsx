@@ -160,7 +160,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
         { type: 'module' }
       );
       workerRef.current = worker;
-      workerHealthyRef.current = true;
+      workerHealthyRef.current = false;
     } catch {
       workerRef.current = null;
       workerHealthyRef.current = false;
@@ -169,6 +169,10 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
 
     worker.onmessage = (event: MessageEvent<WorkerOutboundMessage>) => {
       const msg = event.data;
+      if (msg.type === 'ready') {
+        workerHealthyRef.current = true;
+        return;
+      }
       if (msg.type === 'parsed') {
         pendingFileRef.current = null;
         fallbackWorkbookRef.current = null;

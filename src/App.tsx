@@ -7,6 +7,8 @@ import {
   X,
 } from 'lucide-react';
 import { CatalogSection } from './components/CatalogSection';
+import { DiamondDetailModal } from './components/DiamondDetailModal';
+import { ExcelImportModal } from './components/ExcelImportModal';
 import { GoogleSignInButton } from './components/GoogleSignInButton';
 import { ManagerCabinetView } from './components/ManagerCabinetView';
 import { ManagerPasswordGate } from './components/ManagerPasswordGate';
@@ -103,20 +105,6 @@ const GoogleSheetsWorkspace = lazyWithRetry(
       default: m.GoogleSheetsWorkspace,
     })),
   'sheets'
-);
-const DiamondDetailModal = lazyWithRetry(
-  () =>
-    import('./components/DiamondDetailModal').then((m) => ({
-      default: m.DiamondDetailModal,
-    })),
-  'detail-modal'
-);
-const ExcelImportModal = lazyWithRetry(
-  () =>
-    import('./components/ExcelImportModal').then((m) => ({
-      default: m.ExcelImportModal,
-    })),
-  'excel-modal'
 );
 
 interface SectionErrorBoundaryProps {
@@ -1086,33 +1074,29 @@ export default function App() {
         </div>
       </footer>
 
-      {/* Lazy-mounted Diamond Detail Modal (only loaded when a stone is inspected) */}
+      {/* Diamond Detail Modal */}
       {inspectedDiamond && (
-        <Suspense fallback={null}>
-          <DiamondDetailModal
-            diamond={inspectedDiamond}
-            initialTab={inspectorTab}
-            isCompared={comparedIds.includes(inspectedDiamond.id)}
-            isInCart={cartIds.includes(inspectedDiamond.id)}
-            onClose={() => setInspectedDiamondId(null)}
-            onToggleCompare={handleToggleCompare}
-            onToggleCart={handleToggleCart}
-            onFindPair={handleFindPair}
-          />
-        </Suspense>
+        <DiamondDetailModal
+          diamond={inspectedDiamond}
+          initialTab={inspectorTab}
+          isCompared={comparedIds.includes(inspectedDiamond.id)}
+          isInCart={cartIds.includes(inspectedDiamond.id)}
+          onClose={() => setInspectedDiamondId(null)}
+          onToggleCompare={handleToggleCompare}
+          onToggleCart={handleToggleCart}
+          onFindPair={handleFindPair}
+        />
       )}
 
-      {/* Lazy-mounted Excel Import Modal (keeps xlsx & worker out of initial bundle) */}
+      {/* Excel Import Modal (xlsx library & worker load on demand when a file is chosen) */}
       {isExcelModalOpen && (
-        <Suspense fallback={null}>
-          <ExcelImportModal
-            open={isExcelModalOpen}
-            defaultTargetDirectory={excelTargetDirectory}
-            pricingConfig={pricingConfig}
-            onClose={() => setIsExcelModalOpen(false)}
-            onImport={handleImportFromExcel}
-          />
-        </Suspense>
+        <ExcelImportModal
+          open={isExcelModalOpen}
+          defaultTargetDirectory={excelTargetDirectory}
+          pricingConfig={pricingConfig}
+          onClose={() => setIsExcelModalOpen(false)}
+          onImport={handleImportFromExcel}
+        />
       )}
     </div>
   );
