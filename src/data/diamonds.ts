@@ -80,30 +80,30 @@ export const ALL_FANCY_CLARITIES: DiamondClarity[] = [
 ];
 
 export const SHAPE_IMAGE_MAP: Record<DiamondShape, string> = {
-  Round: '/src/assets/images/diamond_round_cut_1794842114159.jpg',
-  Oval: '/src/assets/images/diamond_oval_cut_1794842114463.jpg',
-  Emerald: '/src/assets/images/diamond_emerald_cut_1794842114857.jpg',
-  Princess: '/src/assets/images/diamond_princess_cushion_1794842114497.jpg',
-  Cushion: '/src/assets/images/diamond_princess_cushion_1794842114497.jpg',
-  Pear: '/src/assets/images/diamond_pear_marquise_1794842115413.jpg',
-  Radiant: '/src/assets/images/diamond_emerald_cut_1794842114857.jpg',
-  Marquise: '/src/assets/images/diamond_pear_marquise_1794842115413.jpg',
-  Heart: '/src/assets/images/diamond_princess_cushion_1794842114497.jpg',
-  Asscher: '/src/assets/images/diamond_emerald_cut_1794842114857.jpg',
-  Trilliant: '/src/assets/images/diamond_round_cut_1794842114159.jpg',
-  Baguette: '/src/assets/images/diamond_emerald_cut_1794842114857.jpg',
-  Octagon: '/src/assets/images/diamond_emerald_cut_1794842114857.jpg',
-  Cabochon: '/src/assets/images/diamond_oval_cut_1794842114463.jpg',
+  Round: '/images/diamond_round_cut_1794842114159.jpg',
+  Oval: '/images/diamond_oval_cut_1794842114463.jpg',
+  Emerald: '/images/diamond_emerald_cut_1794842114857.jpg',
+  Princess: '/images/diamond_princess_cushion_1794842114497.jpg',
+  Cushion: '/images/diamond_princess_cushion_1794842114497.jpg',
+  Pear: '/images/diamond_pear_marquise_1794842115413.jpg',
+  Radiant: '/images/diamond_emerald_cut_1794842114857.jpg',
+  Marquise: '/images/diamond_pear_marquise_1794842115413.jpg',
+  Heart: '/images/diamond_princess_cushion_1794842114497.jpg',
+  Asscher: '/images/diamond_emerald_cut_1794842114857.jpg',
+  Trilliant: '/images/diamond_round_cut_1794842114159.jpg',
+  Baguette: '/images/diamond_emerald_cut_1794842114857.jpg',
+  Octagon: '/images/diamond_emerald_cut_1794842114857.jpg',
+  Cabochon: '/images/diamond_oval_cut_1794842114463.jpg',
 };
 
-export const HERO_IMAGE_URL = '/src/assets/images/hero_diamond_atelier_1794842112919.jpg';
+export const HERO_IMAGE_URL = '/images/hero_diamond_atelier_1794842112919.jpg';
 
 export const FANCY_IMAGE_MAP = {
-  yellow: '/src/assets/images/fancy_yellow_diamond_1794909661015.jpg',
-  pink: '/src/assets/images/fancy_pink_diamond_1794909659648.jpg',
-  blue: '/src/assets/images/fancy_blue_diamond_1794909660380.jpg',
-  green: '/src/assets/images/fancy_green_diamond_1794909660879.jpg',
-  cognac: '/src/assets/images/fancy_cognac_diamond_1794909661225.jpg',
+  yellow: '/images/fancy_yellow_diamond_1794909661015.jpg',
+  pink: '/images/fancy_pink_diamond_1794909659648.jpg',
+  blue: '/images/fancy_blue_diamond_1794909660380.jpg',
+  green: '/images/fancy_green_diamond_1794909660879.jpg',
+  cognac: '/images/fancy_cognac_diamond_1794909661225.jpg',
 } as const;
 
 export const FANCY_INTENSITIES = [
