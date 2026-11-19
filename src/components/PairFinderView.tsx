@@ -26,6 +26,7 @@ import {
   PairMatchCriteria,
 } from '../types/diamond';
 import { DiamondShapeIcon } from './DiamondShapeIcon';
+import { NumericInput } from './NumericInput';
 
 interface PairFinderViewProps {
   catalog: Diamond[];
@@ -266,13 +267,12 @@ export const PairFinderView: React.FC<PairFinderViewProps> = ({
               <div className="grid grid-cols-3 gap-2.5">
                 <div>
                   <label className="block text-xs text-[#5A606D] mb-1">Караты</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.1"
-                    max="25"
+                  <NumericInput
+                    min={0.1}
+                    max={25}
+                    emptyValue={1.0}
                     value={customCarat}
-                    onChange={(e) => setCustomCarat(Number(e.target.value) || 1.0)}
+                    onValueChange={setCustomCarat}
                     className="w-full px-2.5 py-2 text-sm font-mono tabular-nums bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg"
                   />
                 </div>
@@ -309,25 +309,23 @@ export const PairFinderView: React.FC<PairFinderViewProps> = ({
               <div className="grid grid-cols-2 gap-2.5">
                 <div>
                   <label className="block text-xs text-[#5A606D] mb-1">Длина (мм)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="3"
-                    max="20"
+                  <NumericInput
+                    min={3}
+                    max={20}
+                    emptyValue={6.5}
                     value={customLengthMm}
-                    onChange={(e) => setCustomLengthMm(Number(e.target.value) || 6.5)}
+                    onValueChange={setCustomLengthMm}
                     className="w-full px-2.5 py-2 text-sm font-mono tabular-nums bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg"
                   />
                 </div>
                 <div>
                   <label className="block text-xs text-[#5A606D] mb-1">Ширина (мм)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="3"
-                    max="20"
+                  <NumericInput
+                    min={3}
+                    max={20}
+                    emptyValue={6.5}
                     value={customWidthMm}
-                    onChange={(e) => setCustomWidthMm(Number(e.target.value) || 6.5)}
+                    onValueChange={setCustomWidthMm}
                     className="w-full px-2.5 py-2 text-sm font-mono tabular-nums bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg"
                   />
                 </div>

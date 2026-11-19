@@ -34,6 +34,7 @@ import {
   PricingConfig,
   PricingMode,
 } from '../types/diamond';
+import { NumericInput } from './NumericInput';
 
 interface ManagerCabinetViewProps {
   catalog: Diamond[];
@@ -201,8 +202,8 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
     );
   };
 
-  const handleInlineCostChange = (stone: Diamond, rawCost: string) => {
-    const nextCost = Math.max(1, Math.round(Number(rawCost) || 0));
+  const handleInlineCostChange = (stone: Diamond, nextCostRaw: number) => {
+    const nextCost = Math.max(1, Math.round(nextCostRaw || 0));
     if (!Number.isFinite(nextCost) || nextCost <= 0) return;
 
     const mode = stone.markupMode || draftConfig.mode;
@@ -585,15 +586,13 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                   ))}
                 </div>
               </div>
-              <input
+              <NumericInput
                 id="mgr-global-value"
-                type="number"
-                step={draftConfig.mode === 'multiplier' ? '0.01' : '1'}
-                min={draftConfig.mode === 'multiplier' ? '0.5' : '-50'}
-                max={draftConfig.mode === 'multiplier' ? '10' : '500'}
+                min={draftConfig.mode === 'multiplier' ? 0.5 : -50}
+                max={draftConfig.mode === 'multiplier' ? 10 : 500}
+                allowNegative={draftConfig.mode === 'percent'}
                 value={draftConfig.value}
-                onChange={(e) => {
-                  const val = Number(e.target.value);
+                onValueChange={(val) => {
                   const next = {
                     ...draftConfig,
                     value: Number.isFinite(val) ? val : 1,
@@ -756,12 +755,11 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
 
                       <td className="p-3.5">
                         <div className="flex items-center gap-1.5">
-                          <input
-                            type="number"
-                            min="1"
-                            step="10"
+                          <NumericInput
+                            min={1}
+                            integerOnly
                             value={costTotal}
-                            onChange={(e) => handleInlineCostChange(d, e.target.value)}
+                            onValueChange={(val) => handleInlineCostChange(d, val)}
                             aria-label={`Входная цена для ${d.sku}`}
                             className="w-24 px-2 py-1 text-xs font-mono tabular-nums bg-white border border-[#D5D9E0] rounded focus:outline-none focus:border-[#1B365D]"
                           />
@@ -792,16 +790,13 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                           >
                             {stoneMode === 'multiplier' ? '×' : '%'}
                           </button>
-                          <input
-                            type="number"
-                            step={stoneMode === 'multiplier' ? '0.01' : '1'}
+                          <NumericInput
+                            min={stoneMode === 'multiplier' ? 0.5 : -50}
+                            max={stoneMode === 'multiplier' ? 10 : 500}
+                            allowNegative={stoneMode === 'percent'}
                             value={stoneVal}
-                            onChange={(e) =>
-                              handleInlineMarkupChange(
-                                d,
-                                stoneMode,
-                                Number(e.target.value) || 0
-                              )
+                            onValueChange={(val) =>
+                              handleInlineMarkupChange(d, stoneMode, val)
                             }
                             aria-label={`Наценка для ${d.sku}`}
                             className="w-16 px-2 py-1 text-xs font-mono tabular-nums bg-white border border-[#D5D9E0] rounded focus:outline-none focus:border-[#1B365D]"
@@ -953,15 +948,13 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                     <label className="block text-[#5A606D] mb-1">
                       Входная цена итого (менеджер)
                     </label>
-                    <input
-                      type="number"
-                      min="1"
-                      step="10"
+                    <NumericInput
+                      min={1}
+                      integerOnly
                       value={editorDraft.costTotal}
-                      onChange={(e) => {
-                        const val = Math.max(1, Number(e.target.value) || 0);
+                      onValueChange={(val) => {
                         setEditorDraft((prev) =>
-                          prev ? { ...prev, costTotal: val } : prev
+                          prev ? { ...prev, costTotal: Math.max(1, val) } : prev
                         );
                       }}
                       className="w-full px-3 py-2 text-sm font-mono tabular-nums bg-white border border-[#D5D9E0] rounded-lg"
@@ -972,21 +965,20 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                     <label className="block text-[#5A606D] mb-1">
                       Входная за карат (/ct)
                     </label>
-                    <input
-                      type="number"
-                      min="1"
-                      step="10"
+                    <NumericInput
+                      min={1}
+                      integerOnly
                       value={Math.round(
                         editorDraft.costTotal / Math.max(0.01, editorDraft.stone.carat)
                       )}
-                      onChange={(e) => {
-                        const perCt = Math.max(1, Number(e.target.value) || 0);
+                      onValueChange={(perCt) => {
                         setEditorDraft((prev) =>
                           prev
                             ? {
                                 ...prev,
-                                costTotal: Math.round(
-                                  perCt * Math.max(0.01, prev.stone.carat)
+                                costTotal: Math.max(
+                                  1,
+                                  Math.round(perCt * Math.max(0.01, prev.stone.carat))
                                 ),
                               }
                             : prev
@@ -1039,20 +1031,16 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                           : 'Итоговая цена клиента'}
                     </label>
                     {editorDraft.markupMode === 'manual' ? (
-                      <input
-                        type="number"
-                        min="1"
-                        step="10"
+                      <NumericInput
+                        min={1}
+                        integerOnly
                         value={editorDraft.manualClientPrice}
-                        onChange={(e) =>
+                        onValueChange={(val) =>
                           setEditorDraft((prev) =>
                             prev
                               ? {
                                   ...prev,
-                                  manualClientPrice: Math.max(
-                                    1,
-                                    Number(e.target.value) || 0
-                                  ),
+                                  manualClientPrice: Math.max(1, val),
                                 }
                               : prev
                           )
@@ -1060,16 +1048,17 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                         className="w-full px-3 py-2 text-sm font-mono tabular-nums bg-white border border-[#1B365D] rounded-lg font-semibold"
                       />
                     ) : (
-                      <input
-                        type="number"
-                        step={editorDraft.markupMode === 'multiplier' ? '0.01' : '1'}
+                      <NumericInput
+                        min={editorDraft.markupMode === 'multiplier' ? 0.5 : -50}
+                        max={editorDraft.markupMode === 'multiplier' ? 10 : 500}
+                        allowNegative={editorDraft.markupMode === 'percent'}
                         value={editorDraft.markupValue}
-                        onChange={(e) =>
+                        onValueChange={(val) =>
                           setEditorDraft((prev) =>
                             prev
                               ? {
                                   ...prev,
-                                  markupValue: Number(e.target.value) || 0,
+                                  markupValue: val,
                                 }
                               : prev
                           )
@@ -1230,20 +1219,19 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
 
                 <div>
                   <label className="block text-[#5A606D] mb-1">Караты (ct)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.05"
-                    max="50"
+                  <NumericInput
+                    min={0.05}
+                    max={50}
+                    emptyValue={0.05}
                     value={editorDraft.stone.carat}
-                    onChange={(e) =>
+                    onValueChange={(val) =>
                       setEditorDraft((prev) =>
                         prev
                           ? {
                               ...prev,
                               stone: {
                                 ...prev.stone,
-                                carat: Math.max(0.05, Number(e.target.value) || 0.05),
+                                carat: val,
                               },
                             }
                           : prev
@@ -1410,18 +1398,19 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div>
                   <label className="block text-[#5A606D] mb-1">Длина (мм)</label>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <NumericInput
+                    min={0.5}
+                    max={50}
+                    emptyValue={5}
                     value={editorDraft.stone.lengthMm}
-                    onChange={(e) =>
+                    onValueChange={(val) =>
                       setEditorDraft((prev) =>
                         prev
                           ? {
                               ...prev,
                               stone: {
                                 ...prev.stone,
-                                lengthMm: Number(e.target.value) || 0,
+                                lengthMm: val,
                               },
                             }
                           : prev
@@ -1432,18 +1421,19 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                 </div>
                 <div>
                   <label className="block text-[#5A606D] mb-1">Ширина (мм)</label>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <NumericInput
+                    min={0.5}
+                    max={50}
+                    emptyValue={5}
                     value={editorDraft.stone.widthMm}
-                    onChange={(e) =>
+                    onValueChange={(val) =>
                       setEditorDraft((prev) =>
                         prev
                           ? {
                               ...prev,
                               stone: {
                                 ...prev.stone,
-                                widthMm: Number(e.target.value) || 0,
+                                widthMm: val,
                               },
                             }
                           : prev
@@ -1454,18 +1444,19 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                 </div>
                 <div>
                   <label className="block text-[#5A606D] mb-1">Высота (мм)</label>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <NumericInput
+                    min={0.5}
+                    max={50}
+                    emptyValue={3}
                     value={editorDraft.stone.depthMm}
-                    onChange={(e) =>
+                    onValueChange={(val) =>
                       setEditorDraft((prev) =>
                         prev
                           ? {
                               ...prev,
                               stone: {
                                 ...prev.stone,
-                                depthMm: Number(e.target.value) || 0,
+                                depthMm: val,
                               },
                             }
                           : prev

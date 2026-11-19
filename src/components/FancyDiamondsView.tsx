@@ -22,6 +22,7 @@ import {
 } from '../types/diamond';
 import { DiamondCard } from './DiamondCard';
 import { DiamondShapeIcon } from './DiamondShapeIcon';
+import { NumericInput } from './NumericInput';
 
 interface FancyDiamondsViewProps {
   diamonds: Diamond[];
@@ -530,25 +531,21 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="number"
-                  step="0.05"
-                  min="0"
+                <NumericInput
+                  min={0}
                   max={maxCarat}
+                  emptyValue={0}
                   value={minCarat}
-                  onChange={(e) => setMinCarat(Math.max(0, Number(e.target.value) || 0))}
+                  onValueChange={(val) => setMinCarat(Math.max(0, val))}
                   aria-label="Минимальный вес в каратах"
                   className="w-full px-2.5 py-1.5 text-xs font-mono tabular-nums bg-[#FAFAFA] border border-[#D5D9E0] rounded-md"
                 />
-                <input
-                  type="number"
-                  step="0.05"
+                <NumericInput
                   min={minCarat}
                   max={sliderMaxCarat * 2}
+                  emptyValue={Math.max(minCarat, sliderMaxCarat)}
                   value={maxCarat}
-                  onChange={(e) =>
-                    setMaxCarat(Math.max(minCarat, Number(e.target.value) || 5.0))
-                  }
+                  onValueChange={(val) => setMaxCarat(Math.max(0, val))}
                   aria-label="Максимальный вес в каратах"
                   className="w-full px-2.5 py-1.5 text-xs font-mono tabular-nums bg-[#FAFAFA] border border-[#D5D9E0] rounded-md"
                 />
@@ -579,25 +576,23 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="number"
-                  step={priceStep}
-                  min="0"
+                <NumericInput
+                  min={0}
                   max={maxPrice}
+                  integerOnly
+                  emptyValue={0}
                   value={minPrice}
-                  onChange={(e) => setMinPrice(Math.max(0, Number(e.target.value) || 0))}
+                  onValueChange={(val) => setMinPrice(Math.max(0, val))}
                   aria-label="Минимальная цена"
                   className="w-full px-2.5 py-1.5 text-xs font-mono tabular-nums bg-[#FAFAFA] border border-[#D5D9E0] rounded-md"
                 />
-                <input
-                  type="number"
-                  step={priceStep}
+                <NumericInput
                   min={minPrice}
                   max={sliderMaxPrice * 2}
+                  integerOnly
+                  emptyValue={Math.max(minPrice, sliderMaxPrice)}
                   value={maxPrice}
-                  onChange={(e) =>
-                    setMaxPrice(Math.max(minPrice, Number(e.target.value) || 150000))
-                  }
+                  onValueChange={(val) => setMaxPrice(Math.max(0, val))}
                   aria-label="Максимальная цена"
                   className="w-full px-2.5 py-1.5 text-xs font-mono tabular-nums bg-[#FAFAFA] border border-[#D5D9E0] rounded-md"
                 />

@@ -24,6 +24,7 @@ import {
   PriceAlertRule,
   PriceDropNotification,
 } from '../types/diamond';
+import { NumericInput } from './NumericInput';
 
 interface PriceAlertsViewProps {
   catalog: Diamond[];
@@ -234,37 +235,35 @@ export const PriceAlertsView: React.FC<PriceAlertsViewProps> = ({
             <div className="grid grid-cols-3 gap-2.5">
               <div>
                 <label className="block text-xs text-[#5A606D] mb-1">От (ct)</label>
-                <input
-                  type="number"
-                  step="0.05"
-                  min="0.2"
-                  max="10"
+                <NumericInput
+                  min={0.2}
+                  max={10}
+                  emptyValue={0.3}
                   value={minCarat}
-                  onChange={(e) => setMinCarat(Number(e.target.value) || 0.3)}
+                  onValueChange={setMinCarat}
                   className="w-full px-2.5 py-2 text-sm font-mono tabular-nums bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg"
                 />
               </div>
               <div>
                 <label className="block text-xs text-[#5A606D] mb-1">До (ct)</label>
-                <input
-                  type="number"
-                  step="0.05"
-                  min="0.3"
-                  max="15"
+                <NumericInput
+                  min={0.3}
+                  max={15}
+                  emptyValue={5.0}
                   value={maxCarat}
-                  onChange={(e) => setMaxCarat(Number(e.target.value) || 5.0)}
+                  onValueChange={setMaxCarat}
                   className="w-full px-2.5 py-2 text-sm font-mono tabular-nums bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg"
                 />
               </div>
               <div>
                 <label className="block text-xs text-[#5A606D] mb-1">Макс. ($)</label>
-                <input
-                  type="number"
-                  step="500"
-                  min="1000"
-                  max="250000"
+                <NumericInput
+                  min={1000}
+                  max={250000}
+                  integerOnly
+                  emptyValue={20000}
                   value={maxPriceUsd}
-                  onChange={(e) => setMaxPriceUsd(Number(e.target.value) || 20000)}
+                  onValueChange={setMaxPriceUsd}
                   className="w-full px-2.5 py-2 text-sm font-mono tabular-nums bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg"
                 />
               </div>

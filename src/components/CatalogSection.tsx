@@ -23,6 +23,7 @@ import {
 } from '../types/diamond';
 import { DiamondCard } from './DiamondCard';
 import { DiamondShapeIcon } from './DiamondShapeIcon';
+import { NumericInput } from './NumericInput';
 
 interface CatalogSectionProps {
   diamonds: Diamond[];
@@ -438,31 +439,29 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
               </span>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <input
-                type="number"
-                step="0.05"
-                min="0"
+              <NumericInput
+                min={0}
                 max={filters.maxCarat}
+                emptyValue={0}
                 value={filters.minCarat}
-                onChange={(e) =>
+                onValueChange={(val) =>
                   onChangeFilters((prev) => ({
                     ...prev,
-                    minCarat: Math.max(0, Number(e.target.value) || 0),
+                    minCarat: Math.max(0, val),
                   }))
                 }
                 aria-label="Минимальный вес в каратах"
                 className="w-full px-2.5 py-1.5 text-xs font-mono tabular-nums bg-[#FAFAFA] border border-[#D5D9E0] rounded-md"
               />
-              <input
-                type="number"
-                step="0.05"
+              <NumericInput
                 min={filters.minCarat}
                 max={sliderMaxCarat * 2}
+                emptyValue={Math.max(filters.minCarat, sliderMaxCarat)}
                 value={filters.maxCarat}
-                onChange={(e) =>
+                onValueChange={(val) =>
                   onChangeFilters((prev) => ({
                     ...prev,
-                    maxCarat: Math.max(prev.minCarat, Number(e.target.value) || 5.0),
+                    maxCarat: Math.max(0, val),
                   }))
                 }
                 aria-label="Максимальный вес в каратах"
@@ -498,31 +497,31 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
               </span>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <input
-                type="number"
-                step={priceStep}
-                min="0"
+              <NumericInput
+                min={0}
                 max={filters.maxPrice}
+                integerOnly
+                emptyValue={0}
                 value={filters.minPrice}
-                onChange={(e) =>
+                onValueChange={(val) =>
                   onChangeFilters((prev) => ({
                     ...prev,
-                    minPrice: Math.max(0, Number(e.target.value) || 0),
+                    minPrice: Math.max(0, val),
                   }))
                 }
                 aria-label="Минимальная цена"
                 className="w-full px-2.5 py-1.5 text-xs font-mono tabular-nums bg-[#FAFAFA] border border-[#D5D9E0] rounded-md"
               />
-              <input
-                type="number"
-                step={priceStep}
+              <NumericInput
                 min={filters.minPrice}
                 max={sliderMaxPrice * 2}
+                integerOnly
+                emptyValue={Math.max(filters.minPrice, sliderMaxPrice)}
                 value={filters.maxPrice}
-                onChange={(e) =>
+                onValueChange={(val) =>
                   onChangeFilters((prev) => ({
                     ...prev,
-                    maxPrice: Math.max(prev.minPrice, Number(e.target.value) || 95000),
+                    maxPrice: Math.max(0, val),
                   }))
                 }
                 aria-label="Максимальная цена"
