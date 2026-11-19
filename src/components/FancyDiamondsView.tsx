@@ -1,6 +1,5 @@
 import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import {
-  FileSpreadsheet,
   GitCompare,
   RotateCcw,
   Search,
@@ -8,6 +7,7 @@ import {
 } from 'lucide-react';
 import {
   ALL_CLARITIES,
+  ALL_FANCY_SHADES,
   ALL_SHAPES,
   FANCY_INTENSITIES,
   SHAPE_SHORT_RU,
@@ -22,20 +22,21 @@ import {
 } from '../types/diamond';
 import { DiamondCard } from './DiamondCard';
 import { DiamondShapeIcon } from './DiamondShapeIcon';
+import { DualRangeSlider } from './DualRangeSlider';
 import { NumericInput } from './NumericInput';
 import { PaginationBar } from './PaginationBar';
 
 interface FancyDiamondsViewProps {
   diamonds: Diamond[];
   comparedIds: string[];
+  cartIds: string[];
   watchedDiamondIds: Set<string>;
   onInspect: (diamond: Diamond, tab?: 'photo' | 'video' | 'cert') => void;
   onToggleCompare: (diamondId: string) => void;
+  onToggleCart: (diamondId: string) => void;
   onFindPair: (diamond: Diamond) => void;
   onToggleWatch: (diamond: Diamond) => void;
-  onOpenExcelImport: () => void;
   onGoToPairFinder: () => void;
-  onExportSheets: (stones: Diamond[], label: string) => void;
 }
 
 type SortBy = 'price-asc' | 'price-desc' | 'carat-desc' | 'carat-asc' | 'drop-desc';
@@ -43,14 +44,14 @@ type SortBy = 'price-asc' | 'price-desc' | 'carat-desc' | 'carat-asc' | 'drop-de
 export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
   diamonds,
   comparedIds,
+  cartIds,
   watchedDiamondIds,
   onInspect,
   onToggleCompare,
+  onToggleCart,
   onFindPair,
   onToggleWatch,
-  onOpenExcelImport,
   onGoToPairFinder,
-  onExportSheets,
 }) => {
   const [selectedColorFamilies, setSelectedColorFamilies] = useState<string[]>([]);
   const [selectedIntensities, setSelectedIntensities] = useState<string[]>([]);
@@ -68,6 +69,7 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
   const [pageSize, setPageSize] = useState(24);
 
   const comparedSet = useMemo(() => new Set(comparedIds), [comparedIds]);
+  const cartSet = useMemo(() => new Set(cartIds), [cartIds]);
 
   const facets = useMemo(() => {
     const colorFamilyCounts = new Map<string, number>();
@@ -129,8 +131,13 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
           )
         : ALL_CLARITIES;
 
+    const extraColorFamilies = Array.from(colorFamilyCounts.keys()).filter(
+      (f) => !(ALL_FANCY_SHADES as readonly string[]).includes(f)
+    );
+    const availableColorFamilies = [...ALL_FANCY_SHADES, ...extraColorFamilies];
+
     return {
-      colorFamilies: Array.from(colorFamilyCounts.keys()),
+      colorFamilies: availableColorFamilies,
       colorFamilyCounts,
       availableIntensities,
       intensityCounts,
@@ -300,31 +307,12 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
             <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
-                onClick={onOpenExcelImport}
-                className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-medium rounded-lg bg-[#1B365D] text-white hover:bg-[#142947] transition-colors whitespace-nowrap shrink-0"
-              >
-                <FileSpreadsheet className="w-4 h-4" />
-                Загрузить .xlsx в директорию
-              </button>
-              <button
-                type="button"
                 onClick={onGoToPairFinder}
                 className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-medium rounded-lg border border-[#D5D9E0] bg-white text-[#111317] hover:bg-[#F7F8FA] transition-colors whitespace-nowrap shrink-0"
               >
                 <GitCompare className="w-4 h-4 text-[#1B365D]" />
                 Подбор пары
               </button>
-              {filteredDiamonds.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    onExportSheets(filteredDiamonds, 'Директория «Цветные бриллианты»')
-                  }
-                  className="px-4 py-2.5 text-xs font-medium rounded-lg border border-[#D5D9E0] bg-white text-[#111317] hover:bg-[#F7F8FA] transition-colors whitespace-nowrap shrink-0"
-                >
-                  Экспорт в Google Sheets
-                </button>
-              )}
             </div>
           </div>
 
@@ -373,7 +361,7 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
             <div className="flex items-center gap-2.5">
               <SlidersHorizontal className="w-4 h-4 text-[#1B365D]" />
               <h2 className="text-xl font-semibold text-[#111317]">
-                Фильтры директории цветных бриллиантов
+                Параметры подбора
               </h2>
             </div>
 
@@ -407,7 +395,7 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="space-y-2.5">
               <div className="text-xs font-medium text-[#5A606D]">
-                Основной цвет (Hue)
+                Оттенок
               </div>
               <div className="flex flex-wrap gap-2">
                 {facets.colorFamilies.map((family) => {
@@ -422,7 +410,9 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
                       className={`inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md border transition-colors whitespace-nowrap ${
                         active
                           ? 'bg-[#1B365D] border-[#1B365D] text-white'
-                          : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                          : count > 0
+                            ? 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                            : 'bg-[#FAFAFA]/60 border-[#E4E6EB]/70 text-[#8A919E] hover:text-[#111317] hover:border-[#BFC6D2]'
                       }`}
                     >
                       <span
@@ -431,13 +421,15 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
                         style={{ backgroundColor: swatch }}
                       />
                       <span>{family}</span>
-                      <span
-                        className={`font-mono tabular-nums ${
-                          active ? 'text-white/80' : 'text-[#6B7280]'
-                        }`}
-                      >
-                        {count}
-                      </span>
+                      {count > 0 && (
+                        <span
+                          className={`font-mono tabular-nums ${
+                            active ? 'text-white/80' : 'text-[#6B7280]'
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      )}
                     </button>
                   );
                 })}
@@ -512,32 +504,32 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
             </div>
           </div>
 
-          {/* Clarity, Carat, Price Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2">
-            {/* Clarity */}
-            <div className="space-y-2.5">
-              <div className="text-xs font-medium text-[#5A606D]">Чистота</div>
-              <div className="grid grid-cols-4 gap-1">
-                {facets.availableClarities.slice(0, 12).map((clarity) => {
-                  const active = selectedClarities.includes(clarity);
-                  return (
-                    <button
-                      key={clarity}
-                      type="button"
-                      onClick={() => toggleItem(setSelectedClarities, clarity)}
-                      className={`h-9 px-1 text-xs font-mono rounded-md border transition-colors truncate ${
-                        active
-                          ? 'bg-[#1B365D] border-[#1B365D] text-white font-semibold'
-                          : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
-                      }`}
-                    >
-                      {clarity}
-                    </button>
-                  );
-                })}
-              </div>
+          {/* Clarity — single horizontal line */}
+          <div className="space-y-2">
+            <div className="text-xs font-medium text-[#5A606D]">Чистота</div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {facets.availableClarities.slice(0, 12).map((clarity) => {
+                const active = selectedClarities.includes(clarity);
+                return (
+                  <button
+                    key={clarity}
+                    type="button"
+                    onClick={() => toggleItem(setSelectedClarities, clarity)}
+                    className={`h-9 min-w-[54px] px-3 text-xs font-mono rounded-md border transition-colors whitespace-nowrap ${
+                      active
+                        ? 'bg-[#1B365D] border-[#1B365D] text-white font-semibold'
+                        : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                    }`}
+                  >
+                    {clarity}
+                  </button>
+                );
+              })}
             </div>
+          </div>
 
+          {/* Carat & Price Dual-Thumb Range Sliders */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-1">
             {/* Carat Range */}
             <div className="space-y-2.5">
               <div className="flex items-center justify-between text-xs">
@@ -552,7 +544,7 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
                   max={maxCarat}
                   emptyValue={0}
                   value={minCarat}
-                  onValueChange={(val) => setMinCarat(Math.max(0, val))}
+                  onValueChange={(val) => setMinCarat(Math.max(0, Math.min(val, maxCarat)))}
                   aria-label="Минимальный вес в каратах"
                   className="w-full px-2.5 py-1.5 text-xs font-mono tabular-nums bg-[#FAFAFA] border border-[#D5D9E0] rounded-md"
                 />
@@ -561,22 +553,21 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
                   max={sliderMaxCarat * 2}
                   emptyValue={Math.max(minCarat, sliderMaxCarat)}
                   value={maxCarat}
-                  onValueChange={(val) => setMaxCarat(Math.max(0, val))}
+                  onValueChange={(val) => setMaxCarat(Math.max(minCarat, val))}
                   aria-label="Максимальный вес в каратах"
                   className="w-full px-2.5 py-1.5 text-xs font-mono tabular-nums bg-[#FAFAFA] border border-[#D5D9E0] rounded-md"
                 />
               </div>
-              <input
-                type="range"
-                min={facets.boundMinCarat}
+              <DualRangeSlider
+                min={Math.min(facets.boundMinCarat, minCarat)}
                 max={sliderMaxCarat}
-                step="0.05"
-                value={maxCarat}
-                onChange={(e) =>
-                  setMaxCarat(Math.max(minCarat, Number(e.target.value)))
-                }
-                aria-label="Верхняя граница каратности"
-                className="w-full accent-[#1B365D] cursor-pointer"
+                step={0.05}
+                valueMin={minCarat}
+                valueMax={maxCarat}
+                onChangeMin={(next) => setMinCarat(Number(Math.min(next, maxCarat).toFixed(2)))}
+                onChangeMax={(next) => setMaxCarat(Number(Math.max(next, minCarat).toFixed(2)))}
+                ariaLabelMin="Нижняя граница каратности"
+                ariaLabelMax="Верхняя граница каратности"
               />
             </div>
 
@@ -598,7 +589,7 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
                   integerOnly
                   emptyValue={0}
                   value={minPrice}
-                  onValueChange={(val) => setMinPrice(Math.max(0, val))}
+                  onValueChange={(val) => setMinPrice(Math.max(0, Math.min(val, maxPrice)))}
                   aria-label="Минимальная цена"
                   className="w-full px-2.5 py-1.5 text-xs font-mono tabular-nums bg-[#FAFAFA] border border-[#D5D9E0] rounded-md"
                 />
@@ -608,22 +599,21 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
                   integerOnly
                   emptyValue={Math.max(minPrice, sliderMaxPrice)}
                   value={maxPrice}
-                  onValueChange={(val) => setMaxPrice(Math.max(0, val))}
+                  onValueChange={(val) => setMaxPrice(Math.max(minPrice, val))}
                   aria-label="Максимальная цена"
                   className="w-full px-2.5 py-1.5 text-xs font-mono tabular-nums bg-[#FAFAFA] border border-[#D5D9E0] rounded-md"
                 />
               </div>
-              <input
-                type="range"
-                min={facets.boundMinPrice}
+              <DualRangeSlider
+                min={Math.min(facets.boundMinPrice, minPrice)}
                 max={sliderMaxPrice}
                 step={priceStep}
-                value={maxPrice}
-                onChange={(e) =>
-                  setMaxPrice(Math.max(minPrice, Number(e.target.value)))
-                }
-                aria-label="Верхняя граница цены"
-                className="w-full accent-[#1B365D] cursor-pointer"
+                valueMin={minPrice}
+                valueMax={maxPrice}
+                onChangeMin={(next) => setMinPrice(Math.min(next, maxPrice))}
+                onChangeMax={(next) => setMaxPrice(Math.max(next, minPrice))}
+                ariaLabelMin="Нижняя граница цены"
+                ariaLabelMax="Верхняя граница цены"
               />
             </div>
           </div>
@@ -678,7 +668,7 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
               Цветные бриллианты по выбранным параметрам не найдены
             </h3>
             <p className="text-sm text-[#5A606D]">
-              Сбросьте фильтры оттенков и интенсивности или загрузите новую партию из файла .xlsx.
+              Сбросьте фильтры оттенков и интенсивности или расширьте диапазон каратности и цены.
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
               <button
@@ -688,14 +678,6 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 Сбросить фильтры
-              </button>
-              <button
-                type="button"
-                onClick={onOpenExcelImport}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg border border-[#D5D9E0] bg-white text-[#111317] hover:bg-[#F7F8FA] transition-colors"
-              >
-                <FileSpreadsheet className="w-3.5 h-3.5 text-[#1B365D]" />
-                Загрузить из .xlsx
               </button>
             </div>
           </div>
@@ -707,9 +689,11 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
                   key={diamond.id}
                   diamond={diamond}
                   isCompared={comparedSet.has(diamond.id)}
+                  isInCart={cartSet.has(diamond.id)}
                   isWatched={watchedDiamondIds.has(diamond.id)}
                   onInspect={onInspect}
                   onToggleCompare={onToggleCompare}
+                  onToggleCart={onToggleCart}
                   onFindPair={onFindPair}
                   onToggleWatch={onToggleWatch}
                 />

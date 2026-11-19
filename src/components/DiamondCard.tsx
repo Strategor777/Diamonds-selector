@@ -7,6 +7,7 @@ import {
   Maximize2,
   PlayCircle,
   Scale,
+  ShoppingBag,
 } from 'lucide-react';
 import {
   SHAPE_SHORT_RU,
@@ -20,9 +21,11 @@ import { DiamondTurntable360 } from './DiamondTurntable360';
 interface DiamondCardProps {
   diamond: Diamond;
   isCompared: boolean;
+  isInCart?: boolean;
   isWatched?: boolean;
   onInspect: (diamond: Diamond, initialTab?: 'photo' | 'video' | 'cert') => void;
   onToggleCompare: (diamondId: string) => void;
+  onToggleCart?: (diamondId: string) => void;
   onFindPair: (diamond: Diamond) => void;
   onToggleWatch?: (diamond: Diamond) => void;
 }
@@ -30,8 +33,10 @@ interface DiamondCardProps {
 export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
   diamond,
   isCompared,
+  isInCart = false,
   onInspect,
   onToggleCompare,
+  onToggleCart,
   onFindPair,
 }) => {
   const [imgError, setImgError] = useState(false);
@@ -126,10 +131,10 @@ export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
       {/* Card Body */}
       <div className="p-5 flex flex-col flex-1 justify-between gap-4">
         <div className="space-y-2.5">
-          {/* Quiet 1-line unboxed kicker */}
+          {/* Quiet 1-line unboxed SKU kicker (location hidden) */}
           <div className="flex items-center justify-between gap-2 text-xs text-[#5A606D]">
             <span className="font-mono uppercase tracking-wider truncate">
-              {diamond.sku} · {diamond.origin}
+              {diamond.sku}
             </span>
           </div>
 
@@ -224,37 +229,63 @@ export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
             </span>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => onToggleCompare(diamond.id)}
-              className={`inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md border transition-colors whitespace-nowrap ${
-                isCompared
-                  ? 'bg-[#1B365D] border-[#1B365D] text-white'
-                  : 'bg-white border-[#D5D9E0] text-[#111317] hover:bg-[#F7F8FA]'
-              }`}
-            >
-              {isCompared ? (
-                <>
-                  <Check className="w-3.5 h-3.5" />
-                  В сравнении
-                </>
-              ) : (
-                <>
-                  <Scale className="w-3.5 h-3.5" />
-                  Сравнить
-                </>
-              )}
-            </button>
+          <div className="space-y-2">
+            {onToggleCart && (
+              <button
+                type="button"
+                onClick={() => onToggleCart(diamond.id)}
+                className={`w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md border transition-colors whitespace-nowrap ${
+                  isInCart
+                    ? 'bg-[#065F46] border-[#065F46] text-white hover:bg-[#044935]'
+                    : 'bg-[#1B365D] border-[#1B365D] text-white hover:bg-[#142947]'
+                }`}
+              >
+                {isInCart ? (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    В корзине
+                  </>
+                ) : (
+                  <>
+                    <ShoppingBag className="w-3.5 h-3.5" />
+                    В корзину
+                  </>
+                )}
+              </button>
+            )}
 
-            <button
-              type="button"
-              onClick={() => onFindPair(diamond)}
-              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md border border-[#D5D9E0] bg-white text-[#111317] hover:bg-[#F7F8FA] transition-colors whitespace-nowrap"
-            >
-              <GitCompare className="w-3.5 h-3.5 text-[#1B365D]" />
-              Найти пару
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => onToggleCompare(diamond.id)}
+                className={`inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md border transition-colors whitespace-nowrap ${
+                  isCompared
+                    ? 'bg-[#1B365D] border-[#1B365D] text-white'
+                    : 'bg-white border-[#D5D9E0] text-[#111317] hover:bg-[#F7F8FA]'
+                }`}
+              >
+                {isCompared ? (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    В сравнении
+                  </>
+                ) : (
+                  <>
+                    <Scale className="w-3.5 h-3.5" />
+                    Сравнить
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onFindPair(diamond)}
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md border border-[#D5D9E0] bg-white text-[#111317] hover:bg-[#F7F8FA] transition-colors whitespace-nowrap"
+              >
+                <GitCompare className="w-3.5 h-3.5 text-[#1B365D]" />
+                Найти пару
+              </button>
+            </div>
           </div>
         </div>
       </div>

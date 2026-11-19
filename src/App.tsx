@@ -1,8 +1,9 @@
-import React, { Suspense, lazy, useDeferredValue, useMemo, useState } from 'react';
+import React, { Suspense, lazy, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import type { User } from 'firebase/auth';
 import {
   ArrowRight,
   Scale,
+  ShoppingBag,
   X,
 } from 'lucide-react';
 import { CatalogSection } from './components/CatalogSection';
@@ -18,11 +19,13 @@ import {
   computeCatalogBounds,
   deduplicateDiamonds,
   filterAndSortCatalog,
+  isFancyDiamond,
 } from './lib/catalogEngine';
 import {
   AppSection,
   Diamond,
   DiamondFilters,
+  OrderRequest,
   PricingConfig,
 } from './types/diamond';
 
@@ -42,6 +45,11 @@ const CompareView = lazy(() =>
     default: m.CompareView,
   }))
 );
+const CartView = lazy(() =>
+  import('./components/CartView').then((m) => ({
+    default: m.CartView,
+  }))
+);
 const GoogleSheetsWorkspace = lazy(() =>
   import('./components/GoogleSheetsWorkspace').then((m) => ({
     default: m.GoogleSheetsWorkspace,
@@ -50,6 +58,11 @@ const GoogleSheetsWorkspace = lazy(() =>
 const ManagerCabinetView = lazy(() =>
   import('./components/ManagerCabinetView').then((m) => ({
     default: m.ManagerCabinetView,
+  }))
+);
+const ManagerPasswordGate = lazy(() =>
+  import('./components/ManagerPasswordGate').then((m) => ({
+    default: m.ManagerPasswordGate,
   }))
 );
 const DiamondDetailModal = lazy(() =>
@@ -105,8 +118,33 @@ export default function App() {
   const [inspectedDiamondId, setInspectedDiamondId] = useState<string | null>(null);
   const [inspectorTab, setInspectorTab] = useState<'photo' | 'video' | 'cert'>('photo');
 
-  // Comparison state (up to 4 stones)
-  const [comparedIds, setComparedIds] = useState<string[]>(['dm-001', 'dm-002']);
+  // Comparison state (off by default — activated only via button)
+  const [comparedIds, setComparedIds] = useState<string[]>([]);
+
+  // Shopping Cart & Order Requests state
+  const [cartIds, setCartIds] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const saved = window.localStorage.getItem('diamonds_selector_cart_v1');
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [submittedOrders, setSubmittedOrders] = useState<OrderRequest[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const saved = window.localStorage.getItem('diamonds_selector_orders_v1');
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Manager Cabinet password unlock state (password: 0000)
+  const [isManagerUnlocked, setIsManagerUnlocked] = useState(false);
 
   // Pair Finder anchor
   const [pairAnchorId, setPairAnchorId] = useState<string | null>('dm-001');
@@ -122,6 +160,25 @@ export default function App() {
   const [importBanner, setImportBanner] = useState<string | null>(null);
 
   const [heroImgError, setHeroImgError] = useState(false);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('diamonds_selector_cart_v1', JSON.stringify(cartIds));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [cartIds]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        'diamonds_selector_orders_v1',
+        JSON.stringify(submittedOrders)
+      );
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [submittedOrders]);
 
   // Lazily load Firebase Auth after initial paint so Firebase SDK is code-split
   React.useEffect(() => {
@@ -210,6 +267,12 @@ export default function App() {
     return catalog.filter((d) => set.has(d.id));
   }, [catalog, comparedIds]);
 
+  const cartDiamonds = useMemo(() => {
+    if (cartIds.length === 0) return [];
+    const set = new Set(cartIds);
+    return catalog.filter((d) => set.has(d.id));
+  }, [catalog, cartIds]);
+
   const watchedDiamondIds = useMemo(() => new Set<string>(), []);
 
   const handleToggleCompare = (diamondId: string) => {
@@ -222,6 +285,19 @@ export default function App() {
       }
       return [...prev, diamondId];
     });
+  };
+
+  const handleToggleCart = (diamondId: string) => {
+    setCartIds((prev) =>
+      prev.includes(diamondId)
+        ? prev.filter((id) => id !== diamondId)
+        : [...prev, diamondId]
+    );
+  };
+
+  const handleSubmitOrder = (order: OrderRequest) => {
+    setSubmittedOrders((prev) => [order, ...prev]);
+    setCartIds([]);
   };
 
   const handleToggleWatchDiamond = () => {
@@ -348,16 +424,19 @@ export default function App() {
       setPairAnchorId(imported[0].id);
     }
 
-    const dirLabel =
-      targetDirectory === 'fancy' ? 'директорию «Цветные бриллианты»' : 'каталог';
+    let importedFancy = 0;
+    for (let i = 0; i < imported.length; i++) {
+      if (isFancyDiamond(imported[i])) importedFancy++;
+    }
+    const importedWhite = imported.length - importedFancy;
+
     const dupSuffix =
       stats.duplicatesInBatch > 0
         ? ` · объединено дублей: ${stats.duplicatesInBatch.toLocaleString('ru-RU')}`
         : '';
     setImportBanner(
-      `${replaceExisting ? 'Обновлена база' : 'Загружено'} ${imported.length.toLocaleString('ru-RU')} строк в ${dirLabel} из «${fileName}» (новых: ${stats.addedCount.toLocaleString('ru-RU')}, обновлено: ${stats.updatedCount.toLocaleString('ru-RU')}${dupSuffix}).`
+      `${replaceExisting ? 'Обновлена база' : 'Загружено'} ${imported.length.toLocaleString('ru-RU')} строк из «${fileName}» (белых: ${importedWhite.toLocaleString('ru-RU')}, цветных: ${importedFancy.toLocaleString('ru-RU')}; новых: ${stats.addedCount.toLocaleString('ru-RU')}, обновлено: ${stats.updatedCount.toLocaleString('ru-RU')}${dupSuffix}).`
     );
-    setActiveSection(targetDirectory === 'fancy' ? 'fancy' : 'catalog');
   };
 
   // Manager Cabinet Actions
@@ -390,6 +469,7 @@ export default function App() {
   const handleDeleteDiamond = (diamondId: string) => {
     setCatalog((prev) => prev.filter((d) => d.id !== diamondId));
     setComparedIds((prev) => prev.filter((id) => id !== diamondId));
+    setCartIds((prev) => prev.filter((id) => id !== diamondId));
     if (inspectedDiamondId === diamondId) {
       setInspectedDiamondId(null);
     }
@@ -456,18 +536,19 @@ export default function App() {
                   : 'border-transparent hover:text-[#111317]'
               }`}
             >
-              Сравнение ({comparedIds.length})
+              {comparedIds.length > 0 ? `Сравнение (${comparedIds.length})` : 'Сравнение'}
             </button>
             <button
               type="button"
-              onClick={() => setActiveSection('sheets')}
-              className={`py-1 border-b-2 transition-colors whitespace-nowrap shrink-0 ${
-                activeSection === 'sheets'
+              onClick={() => setActiveSection('cart')}
+              className={`inline-flex items-center gap-1.5 py-1 border-b-2 transition-colors whitespace-nowrap shrink-0 tabular-nums ${
+                activeSection === 'cart'
                   ? 'border-[#1B365D] text-[#111317]'
                   : 'border-transparent hover:text-[#111317]'
               }`}
             >
-              Google Таблицы
+              <ShoppingBag className="w-3.5 h-3.5" />
+              {cartDiamonds.length > 0 ? `Корзина (${cartDiamonds.length})` : 'Корзина'}
             </button>
             <button
               type="button"
@@ -490,7 +571,7 @@ export default function App() {
                 onClick={() => setActiveSection('sheets')}
                 className="px-4 py-2 text-xs font-medium rounded-md bg-[#1B365D] text-white hover:bg-[#142947] transition-colors whitespace-nowrap shrink-0 max-w-[200px] truncate"
               >
-                {user.displayName || user.email || 'Google Sheets'}
+                {user.displayName || user.email || 'Аккаунт'}
               </button>
             ) : (
               <GoogleSignInButton
@@ -509,8 +590,16 @@ export default function App() {
               { id: 'catalog', label: 'Каталог' },
               { id: 'fancy', label: 'Цветные бриллианты' },
               { id: 'pair-finder', label: 'Подбор пары' },
-              { id: 'compare', label: `Сравнение (${comparedIds.length})` },
-              { id: 'sheets', label: 'Google Таблицы' },
+              {
+                id: 'compare',
+                label:
+                  comparedIds.length > 0 ? `Сравнение (${comparedIds.length})` : 'Сравнение',
+              },
+              {
+                id: 'cart',
+                label:
+                  cartDiamonds.length > 0 ? `Корзина (${cartDiamonds.length})` : 'Корзина',
+              },
               { id: 'manager', label: 'Кабинет менеджера' },
             ] as const
           ).map((item) => (
@@ -540,7 +629,7 @@ export default function App() {
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
                   <div className="lg:col-span-6 flex flex-col justify-center space-y-6 py-2">
                     <div className="text-xs font-medium text-[#5A606D] tracking-wide">
-                      Антверпен · Женева · Цюрих · Сертификаты GIA, IGI, HRD
+                      Сертифицированные природные бриллианты · GIA, IGI, HRD
                     </div>
                     <h1
                       className="text-4xl sm:text-5xl font-semibold text-[#111317] leading-[1.08] tracking-tight"
@@ -550,8 +639,7 @@ export default function App() {
                     </h1>
                     <p className="text-base text-[#5A606D] leading-relaxed max-w-xl">
                       Точный отбор по огранке, цвету, чистоте и каратности с обзором
-                      360°, прямыми ссылками на реестры лабораторий, подбором пар и
-                      синхронизацией с Google Таблицами.
+                      360°, прямыми ссылками на реестры лабораторий и подбором пар.
                     </p>
                     <div className="flex flex-wrap items-center gap-3 pt-1">
                       <a
@@ -618,10 +706,10 @@ export default function App() {
                   </div>
                   <div>
                     <div className="font-mono text-lg font-semibold text-[#111317]">
-                      Google Sheets
+                      Корзина и заявка
                     </div>
                     <div className="text-xs text-[#5A606D] mt-0.5">
-                      Двусторонний импорт и экспорт
+                      Формирование и отправка запроса по камням
                     </div>
                   </div>
                 </div>
@@ -656,12 +744,13 @@ export default function App() {
               onChangeFilters={setFilters}
               onResetFilters={handleResetFilters}
               comparedIds={comparedIds}
+              cartIds={cartIds}
               watchedDiamondIds={watchedDiamondIds}
               onInspect={handleInspect}
               onToggleCompare={handleToggleCompare}
+              onToggleCart={handleToggleCart}
               onFindPair={handleFindPair}
               onToggleWatch={handleToggleWatchDiamond}
-              onOpenExcelImport={() => handleOpenExcelImport('white')}
             />
           </>
         )}
@@ -687,19 +776,19 @@ export default function App() {
               <FancyDiamondsView
                 diamonds={fancyDiamonds}
                 comparedIds={comparedIds}
+                cartIds={cartIds}
                 watchedDiamondIds={watchedDiamondIds}
                 onInspect={handleInspect}
                 onToggleCompare={handleToggleCompare}
+                onToggleCart={handleToggleCart}
                 onFindPair={handleFindPair}
                 onToggleWatch={handleToggleWatchDiamond}
-                onOpenExcelImport={() => handleOpenExcelImport('fancy')}
                 onGoToPairFinder={() => {
                   const firstFancy = fancyDiamonds[0];
                   if (firstFancy) setPairAnchorId(firstFancy.id);
                   setActiveSection('pair-finder');
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
-                onExportSheets={handleExportToSheets}
               />
             </>
           )}
@@ -729,6 +818,20 @@ export default function App() {
             />
           )}
 
+          {activeSection === 'cart' && (
+            <CartView
+              diamonds={cartDiamonds}
+              submittedOrders={submittedOrders}
+              onRemove={(id) =>
+                setCartIds((prev) => prev.filter((item) => item !== id))
+              }
+              onClearCart={() => setCartIds([])}
+              onInspect={handleInspect}
+              onSubmitOrder={handleSubmitOrder}
+              onGoToCatalog={() => setActiveSection('catalog')}
+            />
+          )}
+
           {activeSection === 'sheets' && (
             <GoogleSheetsWorkspace
               user={user}
@@ -746,19 +849,47 @@ export default function App() {
             />
           )}
 
-          {activeSection === 'manager' && (
-            <ManagerCabinetView
-              catalog={catalog}
-              pricingConfig={pricingConfig}
-              managerEmail={user?.email ?? null}
-              onUpdatePricingConfig={setPricingConfig}
-              onApplyPricingToStones={handleApplyPricingToStones}
-              onUpdateDiamond={handleUpdateDiamond}
-              onAddDiamond={handleAddDiamond}
-              onDeleteDiamond={handleDeleteDiamond}
-              onOpenExcelImport={() => handleOpenExcelImport('white')}
-            />
-          )}
+          {activeSection === 'manager' &&
+            (isManagerUnlocked ? (
+              <>
+                {importBanner && (
+                  <div className="max-w-7xl mx-auto px-6 pt-6">
+                    <div className="p-3.5 rounded-lg bg-[#ECFDF5] border border-[#A7F3D0] text-xs text-[#065F46] flex items-center justify-between gap-3">
+                      <span>{importBanner}</span>
+                      <button
+                        type="button"
+                        onClick={() => setImportBanner(null)}
+                        aria-label="Скрыть уведомление"
+                        className="text-[#065F46] hover:text-[#043927]"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <ManagerCabinetView
+                  catalog={catalog}
+                  pricingConfig={pricingConfig}
+                  managerEmail={user?.email ?? null}
+                  onUpdatePricingConfig={setPricingConfig}
+                  onApplyPricingToStones={handleApplyPricingToStones}
+                  onUpdateDiamond={handleUpdateDiamond}
+                  onAddDiamond={handleAddDiamond}
+                  onDeleteDiamond={handleDeleteDiamond}
+                  onOpenExcelImport={() => handleOpenExcelImport('white')}
+                  onLockCabinet={() => {
+                    setIsManagerUnlocked(false);
+                    setActiveSection('catalog');
+                  }}
+                />
+              </>
+            ) : (
+              <ManagerPasswordGate
+                expectedPassword="0000"
+                onUnlock={() => setIsManagerUnlocked(true)}
+                onCancel={() => setActiveSection('catalog')}
+              />
+            ))}
         </Suspense>
       </main>
 
@@ -827,10 +958,10 @@ export default function App() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveSection('sheets')}
+              onClick={() => setActiveSection('cart')}
               className="hover:text-[#111317] transition-colors"
             >
-              Google Таблицы
+              Корзина
             </button>
             <button
               type="button"
@@ -850,8 +981,10 @@ export default function App() {
             diamond={inspectedDiamond}
             initialTab={inspectorTab}
             isCompared={comparedIds.includes(inspectedDiamond.id)}
+            isInCart={cartIds.includes(inspectedDiamond.id)}
             onClose={() => setInspectedDiamondId(null)}
             onToggleCompare={handleToggleCompare}
+            onToggleCart={handleToggleCart}
             onFindPair={handleFindPair}
           />
         </Suspense>

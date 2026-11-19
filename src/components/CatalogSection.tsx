@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  FileSpreadsheet,
   RotateCcw,
   Search,
   SlidersHorizontal,
@@ -9,6 +8,7 @@ import {
   ALL_CLARITIES,
   ALL_COLORS,
   ALL_FANCY_CLARITIES,
+  ALL_FANCY_SHADES,
   ALL_SHAPES,
   FANCY_INTENSITIES,
   SHAPE_SHORT_RU,
@@ -27,6 +27,7 @@ import {
 } from '../types/diamond';
 import { DiamondCard } from './DiamondCard';
 import { DiamondShapeIcon } from './DiamondShapeIcon';
+import { DualRangeSlider } from './DualRangeSlider';
 import { NumericInput } from './NumericInput';
 import { PaginationBar } from './PaginationBar';
 
@@ -40,12 +41,13 @@ interface CatalogSectionProps {
   onChangeFilters: React.Dispatch<React.SetStateAction<DiamondFilters>>;
   onResetFilters: () => void;
   comparedIds: string[];
+  cartIds: string[];
   watchedDiamondIds: Set<string>;
   onInspect: (diamond: Diamond, tab?: 'photo' | 'video' | 'cert') => void;
   onToggleCompare: (diamondId: string) => void;
+  onToggleCart: (diamondId: string) => void;
   onFindPair: (diamond: Diamond) => void;
   onToggleWatch: (diamond: Diamond) => void;
-  onOpenExcelImport: () => void;
 }
 
 const WHITE_COLOR_SET = new Set<string>(ALL_COLORS);
@@ -60,12 +62,13 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
   onChangeFilters,
   onResetFilters,
   comparedIds,
+  cartIds,
   watchedDiamondIds,
   onInspect,
   onToggleCompare,
+  onToggleCart,
   onFindPair,
   onToggleWatch,
-  onOpenExcelImport,
 }) => {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(24);
@@ -93,6 +96,7 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
   ]);
 
   const comparedSet = useMemo(() => new Set(comparedIds), [comparedIds]);
+  const cartSet = useMemo(() => new Set(cartIds), [cartIds]);
 
   // Extract available directory types from the entire catalog (always ordered with Бриллиант first)
   const directoryTypes = useMemo(() => {
@@ -125,9 +129,9 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
 
   // Compute facets strictly scoped to the active directory slice (single O(n) pass for 50k stones)
   const facets = useMemo(() => {
-    const colorFamiliesSet = new Set<string>();
+    const coloredFamilyCounts = new Map<string, number>();
     const fancyIntensityCounts = new Map<string, number>();
-    const colorsSet = new Set<string>();
+    const fancyColorsSet = new Set<string>();
     const claritiesSet = new Set<string>();
     const labsSet = new Set<string>(['GIA', 'IGI', 'HRD']);
     const shapeCounts = new Map<DiamondShape, number>();
@@ -152,9 +156,10 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
 
       scopeTotalCount++;
 
+      // Colorless (D-J) belongs strictly to white diamonds, never to Colored Color Families
       const fam = d.colorFamily || 'Бесцветный (D–J)';
-      if (!isFancyDirectoryOnly || fam !== 'Бесцветный (D–J)') {
-        colorFamiliesSet.add(fam);
+      if (fancy && fam !== 'Бесцветный (D–J)') {
+        coloredFamilyCounts.set(fam, (coloredFamilyCounts.get(fam) || 0) + 1);
       }
 
       if (fancy) {
@@ -163,18 +168,9 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
           intensity,
           (fancyIntensityCounts.get(intensity) || 0) + 1
         );
-      }
-
-      if (isWhiteDirectoryOnly) {
-        if (WHITE_COLOR_SET.has(d.color.toUpperCase())) {
-          colorsSet.add(d.color.toUpperCase());
-        }
-      } else if (isFancyDirectoryOnly) {
         if (!WHITE_COLOR_SET.has(d.color.toUpperCase())) {
-          colorsSet.add(d.color);
+          fancyColorsSet.add(d.color);
         }
-      } else {
-        colorsSet.add(d.color);
       }
 
       claritiesSet.add(d.clarity);
@@ -199,18 +195,14 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
       }
     }
 
-    const hasColoredStones =
-      !isWhiteDirectoryOnly &&
-      Array.from(colorFamiliesSet).some((f) => f !== 'Бесцветный (D–J)');
+    const hasColoredStones = !isWhiteDirectoryOnly && coloredFamilyCounts.size > 0;
+    const extraColorFamilies = Array.from(coloredFamilyCounts.keys()).filter(
+      (f) => !(ALL_FANCY_SHADES as readonly string[]).includes(f)
+    );
+    const orderedColorFamilies = [...ALL_FANCY_SHADES, ...extraColorFamilies];
     const hasCustomStoneTypes =
       directoryTypes.length > 1 ||
       (directoryTypes.length === 1 && directoryTypes[0] !== 'Бриллиант');
-
-    const availableColors = isWhiteDirectoryOnly
-      ? ALL_COLORS
-      : hasColoredStones
-        ? Array.from(colorsSet)
-        : ALL_COLORS;
 
     const baseClarities = isFancyDirectoryOnly ? ALL_FANCY_CLARITIES : ALL_CLARITIES;
     const extraClarities = isWhiteDirectoryOnly
@@ -229,9 +221,10 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
         : baseClarities;
 
     return {
-      colorFamilies: Array.from(colorFamiliesSet),
+      colorFamilies: orderedColorFamilies,
+      colorFamilyCounts: coloredFamilyCounts,
       fancyIntensityCounts,
-      availableColors,
+      fancyColors: Array.from(fancyColorsSet),
       availableClarities,
       availableLabs: ['ALL', ...Array.from(labsSet)],
       shapeCounts,
@@ -258,7 +251,6 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
       const isAlreadyExclusive =
         prev.stoneTypes.length === 1 && prev.stoneTypes[0] === stoneType;
 
-      // Clicking the active directory again resets directory selection to all
       if (isAlreadyExclusive) {
         return {
           ...prev,
@@ -359,7 +351,9 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
     filters.searchQuery.trim() !== '';
 
   const priceStep = facets.primaryCurrency === 'RUB' ? 5000 : 500;
+  const sliderMinCarat = Math.min(facets.boundMinCarat, filters.minCarat);
   const sliderMaxCarat = Math.max(facets.boundMaxCarat, filters.maxCarat);
+  const sliderMinPrice = Math.min(facets.boundMinPrice, filters.minPrice);
   const sliderMaxPrice = Math.max(facets.boundMaxPrice, filters.maxPrice);
 
   // Paginated slice (renders only 24/48/96 DOM cards even on 50,000-stone catalogs)
@@ -382,15 +376,12 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
     <section id="catalog-grid" className="max-w-7xl mx-auto px-6 py-10 space-y-8">
       {/* Multi-Axis Filter Panel */}
       <div className="bg-white border border-[#E4E6EB] rounded-xl p-6 space-y-6">
+        {/* Panel Header: Параметры подбора (Upload button moved exclusively to Manager Cabinet) */}
         <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[#E4E6EB]">
           <div className="flex items-center gap-2.5">
             <SlidersHorizontal className="w-4 h-4 text-[#1B365D]" />
             <h2 className="text-xl font-semibold text-[#111317]">
-              {isWhiteDirectoryOnly
-                ? 'Директория: Белые бриллианты'
-                : isFancyDirectoryOnly
-                  ? 'Директория: Цветные бриллианты'
-                  : 'Параметры подбора камней'}
+              Параметры подбора
             </h2>
           </div>
 
@@ -409,15 +400,6 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
               />
             </div>
 
-            <button
-              type="button"
-              onClick={onOpenExcelImport}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium rounded-lg border border-[#1B365D] bg-[#F8FAFC] text-[#1B365D] hover:bg-[#EEF2F7] transition-colors whitespace-nowrap"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5" />
-              Загрузить из .xlsx
-            </button>
-
             {hasActiveFilters && (
               <button
                 type="button"
@@ -431,123 +413,51 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
           </div>
         </div>
 
-        {/* Directory Switcher & Colored Characteristics Row */}
-        {(facets.hasCustomStoneTypes || facets.hasColoredStones) && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-2">
-            {facets.hasCustomStoneTypes && (
-              <div className="space-y-2">
-                <div className="text-xs font-medium text-[#5A606D]">
-                  Директория / Тип камня
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {directoryTypes.map((st) => {
-                    const active =
-                      filters.stoneTypes.length === 1 && filters.stoneTypes[0] === st;
-                    return (
-                      <button
-                        key={st}
-                        type="button"
-                        onClick={() => handleSelectDirectory(st)}
-                        className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors whitespace-nowrap ${
-                          active
-                            ? 'bg-[#1B365D] border-[#1B365D] text-white'
-                            : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
-                        }`}
-                      >
-                        {st}
-                      </button>
-                    );
-                  })}
-                  {filters.stoneTypes.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onChangeFilters((prev) => ({
-                          ...prev,
-                          stoneTypes: [],
-                          colorFamilies: [],
-                          fancyIntensities: [],
-                          colors: [],
-                        }))
-                      }
-                      className="px-2.5 py-1.5 text-xs font-medium rounded-md border border-transparent text-[#5A606D] hover:text-[#111317] hover:bg-[#F1F3F5] transition-colors whitespace-nowrap"
-                    >
-                      Все категории
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Colored-only characteristics: Color Family (hidden completely when White Diamonds directory is active) */}
-            {!isWhiteDirectoryOnly && facets.hasColoredStones && (
-              <div className="space-y-2">
-                <div className="text-xs font-medium text-[#5A606D]">
-                  Цветовая группа / Оттенок
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {facets.colorFamilies.map((family) => {
-                    const active = filters.colorFamilies.includes(family);
-                    const swatch = getColorHexTint('', family).deep;
-                    return (
-                      <button
-                        key={family}
-                        type="button"
-                        onClick={() => toggleColorFamily(family)}
-                        className={`inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md border transition-colors whitespace-nowrap ${
-                          active
-                            ? 'bg-[#1B365D] border-[#1B365D] text-white'
-                            : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
-                        }`}
-                      >
-                        <span
-                          aria-hidden="true"
-                          className="w-2.5 h-2.5 rounded-full border border-black/15 shrink-0"
-                          style={{ backgroundColor: swatch }}
-                        />
-                        {family}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Fancy Intensity Row — shown ONLY when Colored Diamonds directory is active */}
-        {isFancyDirectoryOnly && (
-          <div className="space-y-2.5">
-            <div className="text-xs font-medium text-[#5A606D]">
-              Интенсивность окраски (Fancy Intensity)
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {FANCY_INTENSITIES.map((intensity) => {
-                const active = filters.fancyIntensities.includes(intensity);
-                const count = facets.fancyIntensityCounts.get(intensity) || 0;
+        {/* 1. Top Block: Директория */}
+        {facets.hasCustomStoneTypes && (
+          <div className="space-y-2">
+            <div className="text-xs font-medium text-[#5A606D]">Директория</div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {directoryTypes.map((st) => {
+                const active =
+                  filters.stoneTypes.length === 1 && filters.stoneTypes[0] === st;
                 return (
                   <button
-                    key={intensity}
+                    key={st}
                     type="button"
-                    onClick={() => toggleFancyIntensity(intensity)}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors whitespace-nowrap tabular-nums ${
+                    onClick={() => handleSelectDirectory(st)}
+                    className={`px-3.5 py-1.5 text-xs font-medium rounded-md border transition-colors whitespace-nowrap ${
                       active
                         ? 'bg-[#1B365D] border-[#1B365D] text-white'
-                        : count > 0
-                          ? 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
-                          : 'bg-[#FAFAFA]/60 border-[#E4E6EB]/70 text-[#8A919E] hover:text-[#111317]'
+                        : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
                     }`}
                   >
-                    {intensity}
-                    {count > 0 ? ` (${count})` : ''}
+                    {st}
                   </button>
                 );
               })}
+              {filters.stoneTypes.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onChangeFilters((prev) => ({
+                      ...prev,
+                      stoneTypes: [],
+                      colorFamilies: [],
+                      fancyIntensities: [],
+                      colors: [],
+                    }))
+                  }
+                  className="px-2.5 py-1.5 text-xs font-medium rounded-md border border-transparent text-[#5A606D] hover:text-[#111317] hover:bg-[#F1F3F5] transition-colors whitespace-nowrap"
+                >
+                  Все категории
+                </button>
+              )}
             </div>
           </div>
         )}
 
-        {/* Shape Selector Row (All 14 Diamond & Gemstone Cuts in a clean 2×7 Grid) */}
+        {/* 2. Below Directory: Форма огранки (14 Cuts in 2×7 Grid) */}
         <div className="space-y-2.5">
           <div className="text-xs font-medium text-[#5A606D]">Форма огранки</div>
           <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
@@ -577,21 +487,20 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
           </div>
         </div>
 
-        {/* Color, Clarity, Carat, Price Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 pt-2">
-          {/* Color — White D-J grid for White directory; Fancy shades for Colored directory */}
-          <div className="space-y-2.5">
-            <div className="text-xs font-medium text-[#5A606D]">
-              {isWhiteDirectoryOnly
-                ? 'Цвет (D–J)'
-                : isFancyDirectoryOnly
-                  ? 'Оттенок / Fancy-цвет'
-                  : facets.hasColoredStones
-                    ? 'Цвет / Оттенок'
-                    : 'Цвет (D–J)'}
-            </div>
-            {isWhiteDirectoryOnly || !facets.hasColoredStones ? (
-              <div className="grid grid-cols-7 gap-1">
+        {/* 3. Below Shape: Color / Shade Block (Scoped cleanly to White vs Colored Directory) */}
+        <div className="space-y-4">
+          {/* White-diamond color scale (D–J) — exclusively for White Diamonds (hidden in Colored directory) */}
+          {!isFancyDirectoryOnly && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-xs font-medium text-[#5A606D]">
+                <span>Цвет (D–J)</span>
+                {!isWhiteDirectoryOnly && (
+                  <span className="text-[11px] font-normal text-[#8A919E]">
+                    · только белые бриллианты
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
                 {ALL_COLORS.map((color) => {
                   const active = filters.colors.includes(color);
                   return (
@@ -599,7 +508,7 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
                       key={color}
                       type="button"
                       onClick={() => toggleColor(color)}
-                      className={`h-9 text-xs font-mono rounded-md border transition-colors ${
+                      className={`h-9 min-w-[44px] px-3 text-xs font-mono rounded-md border transition-colors ${
                         active
                           ? 'bg-[#1B365D] border-[#1B365D] text-white font-semibold'
                           : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
@@ -610,54 +519,135 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
                   );
                 })}
               </div>
-            ) : (
-              <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pr-1">
-                {facets.availableColors.slice(0, 60).map((color) => {
-                  const active = filters.colors.includes(color);
+            </div>
+          )}
+
+          {/* Colored-only characteristics: Shade (Оттенок) — hidden completely in White directory */}
+          {!isWhiteDirectoryOnly && facets.hasColoredStones && (
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-[#5A606D]">
+                Оттенок
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {facets.colorFamilies.map((family) => {
+                  const active = filters.colorFamilies.includes(family);
+                  const swatch = getColorHexTint('', family).deep;
+                  const count = facets.colorFamilyCounts.get(family) || 0;
                   return (
                     <button
-                      key={color}
+                      key={family}
                       type="button"
-                      onClick={() => toggleColor(color)}
-                      className={`px-2.5 py-1.5 text-xs rounded-md border transition-colors ${
+                      onClick={() => toggleColorFamily(family)}
+                      className={`inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md border transition-colors whitespace-nowrap ${
                         active
-                          ? 'bg-[#1B365D] border-[#1B365D] text-white font-medium'
-                          : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                          ? 'bg-[#1B365D] border-[#1B365D] text-white'
+                          : count > 0
+                            ? 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                            : 'bg-[#FAFAFA]/60 border-[#E4E6EB]/70 text-[#8A919E] hover:text-[#111317] hover:border-[#BFC6D2]'
                       }`}
                     >
-                      {color}
+                      <span
+                        aria-hidden="true"
+                        className="w-2.5 h-2.5 rounded-full border border-black/15 shrink-0"
+                        style={{ backgroundColor: swatch }}
+                      />
+                      {family}
                     </button>
                   );
                 })}
               </div>
-            )}
-          </div>
-
-          {/* Clarity */}
-          <div className="space-y-2.5">
-            <div className="text-xs font-medium text-[#5A606D]">Чистота</div>
-            <div className="grid grid-cols-4 gap-1">
-              {facets.availableClarities.slice(0, 12).map((clarity) => {
-                const active = filters.clarities.includes(clarity);
-                return (
-                  <button
-                    key={clarity}
-                    type="button"
-                    onClick={() => toggleClarity(clarity)}
-                    title={clarity}
-                    className={`h-9 px-1 text-xs font-mono rounded-md border transition-colors truncate ${
-                      active
-                        ? 'bg-[#1B365D] border-[#1B365D] text-white font-semibold'
-                        : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
-                    }`}
-                  >
-                    {clarity}
-                  </button>
-                );
-              })}
             </div>
-          </div>
+          )}
 
+          {/* Fancy Intensity & Fancy Shades — shown ONLY in Colored Diamonds directory */}
+          {isFancyDirectoryOnly && (
+            <>
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-[#5A606D]">
+                  Интенсивность окраски (Fancy Intensity)
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {FANCY_INTENSITIES.map((intensity) => {
+                    const active = filters.fancyIntensities.includes(intensity);
+                    const count = facets.fancyIntensityCounts.get(intensity) || 0;
+                    return (
+                      <button
+                        key={intensity}
+                        type="button"
+                        onClick={() => toggleFancyIntensity(intensity)}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors whitespace-nowrap tabular-nums ${
+                          active
+                            ? 'bg-[#1B365D] border-[#1B365D] text-white'
+                            : count > 0
+                              ? 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                              : 'bg-[#FAFAFA]/60 border-[#E4E6EB]/70 text-[#8A919E] hover:text-[#111317]'
+                        }`}
+                      >
+                        {intensity}
+                        {count > 0 ? ` (${count})` : ''}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {facets.fancyColors.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-xs font-medium text-[#5A606D]">
+                    Оттенок / Fancy-цвет
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {facets.fancyColors.slice(0, 40).map((color) => {
+                      const active = filters.colors.includes(color);
+                      return (
+                        <button
+                          key={color}
+                          type="button"
+                          onClick={() => toggleColor(color)}
+                          className={`px-2.5 py-1.5 text-xs rounded-md border transition-colors whitespace-nowrap ${
+                            active
+                              ? 'bg-[#1B365D] border-[#1B365D] text-white font-medium'
+                              : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                          }`}
+                        >
+                          {color}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* 4. Directly Under Shade/Color Block — Clarity laid out in a single clean horizontal line */}
+        <div className="space-y-2">
+          <div className="text-xs font-medium text-[#5A606D]">Чистота</div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {facets.availableClarities.slice(0, 12).map((clarity) => {
+              const active = filters.clarities.includes(clarity);
+              return (
+                <button
+                  key={clarity}
+                  type="button"
+                  onClick={() => toggleClarity(clarity)}
+                  title={clarity}
+                  className={`h-9 min-w-[54px] px-3 text-xs font-mono rounded-md border transition-colors whitespace-nowrap ${
+                    active
+                      ? 'bg-[#1B365D] border-[#1B365D] text-white font-semibold'
+                      : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                  }`}
+                >
+                  {clarity}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 5. Below Clarity — Carat & Price Ranges with Dual-Thumb Sliders */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-1">
           {/* Carat Range */}
           <div className="space-y-2.5">
             <div className="flex items-center justify-between text-xs">
@@ -675,7 +665,7 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
                 onValueChange={(val) =>
                   onChangeFilters((prev) => ({
                     ...prev,
-                    minCarat: Math.max(0, val),
+                    minCarat: Math.max(0, Math.min(val, prev.maxCarat)),
                   }))
                 }
                 aria-label="Минимальный вес в каратах"
@@ -689,27 +679,33 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
                 onValueChange={(val) =>
                   onChangeFilters((prev) => ({
                     ...prev,
-                    maxCarat: Math.max(0, val),
+                    maxCarat: Math.max(prev.minCarat, val),
                   }))
                 }
                 aria-label="Максимальный вес в каратах"
                 className="w-full px-2.5 py-1.5 text-xs font-mono tabular-nums bg-[#FAFAFA] border border-[#D5D9E0] rounded-md"
               />
             </div>
-            <input
-              type="range"
-              min={facets.boundMinCarat}
+            <DualRangeSlider
+              min={sliderMinCarat}
               max={sliderMaxCarat}
-              step="0.05"
-              value={filters.maxCarat}
-              onChange={(e) =>
+              step={0.05}
+              valueMin={filters.minCarat}
+              valueMax={filters.maxCarat}
+              onChangeMin={(nextMin) =>
                 onChangeFilters((prev) => ({
                   ...prev,
-                  maxCarat: Math.max(prev.minCarat, Number(e.target.value)),
+                  minCarat: Number(Math.min(nextMin, prev.maxCarat).toFixed(2)),
                 }))
               }
-              aria-label="Верхняя граница каратности"
-              className="w-full accent-[#1B365D] cursor-pointer"
+              onChangeMax={(nextMax) =>
+                onChangeFilters((prev) => ({
+                  ...prev,
+                  maxCarat: Number(Math.max(nextMax, prev.minCarat).toFixed(2)),
+                }))
+              }
+              ariaLabelMin="Нижняя граница каратности"
+              ariaLabelMax="Верхняя граница каратности"
             />
           </div>
 
@@ -734,7 +730,7 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
                 onValueChange={(val) =>
                   onChangeFilters((prev) => ({
                     ...prev,
-                    minPrice: Math.max(0, val),
+                    minPrice: Math.max(0, Math.min(val, prev.maxPrice)),
                   }))
                 }
                 aria-label="Минимальная цена"
@@ -749,27 +745,33 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
                 onValueChange={(val) =>
                   onChangeFilters((prev) => ({
                     ...prev,
-                    maxPrice: Math.max(0, val),
+                    maxPrice: Math.max(prev.minPrice, val),
                   }))
                 }
                 aria-label="Максимальная цена"
                 className="w-full px-2.5 py-1.5 text-xs font-mono tabular-nums bg-[#FAFAFA] border border-[#D5D9E0] rounded-md"
               />
             </div>
-            <input
-              type="range"
-              min={facets.boundMinPrice}
+            <DualRangeSlider
+              min={sliderMinPrice}
               max={sliderMaxPrice}
               step={priceStep}
-              value={filters.maxPrice}
-              onChange={(e) =>
+              valueMin={filters.minPrice}
+              valueMax={filters.maxPrice}
+              onChangeMin={(nextMin) =>
                 onChangeFilters((prev) => ({
                   ...prev,
-                  maxPrice: Math.max(prev.minPrice, Number(e.target.value)),
+                  minPrice: Math.min(nextMin, prev.maxPrice),
                 }))
               }
-              aria-label="Верхняя граница цены"
-              className="w-full accent-[#1B365D] cursor-pointer"
+              onChangeMax={(nextMax) =>
+                onChangeFilters((prev) => ({
+                  ...prev,
+                  maxPrice: Math.max(nextMax, prev.minPrice),
+                }))
+              }
+              ariaLabelMin="Нижняя граница цены"
+              ariaLabelMax="Верхняя граница цены"
             />
           </div>
         </div>
@@ -877,9 +879,11 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
                   key={diamond.id}
                   diamond={diamond}
                   isCompared={comparedSet.has(diamond.id)}
+                  isInCart={cartSet.has(diamond.id)}
                   isWatched={watchedDiamondIds.has(diamond.id)}
                   onInspect={onInspect}
                   onToggleCompare={onToggleCompare}
+                  onToggleCart={onToggleCart}
                   onFindPair={onFindPair}
                   onToggleWatch={onToggleWatch}
                 />

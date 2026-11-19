@@ -600,6 +600,9 @@ export function classifyColorFamily(colorText: string): string {
     return 'Бесцветный (D–J)';
   }
   const low = colorText.trim().toLowerCase();
+  if (low.includes('хамелеон') || low.includes('chameleon')) {
+    return 'Хамелеон';
+  }
   if (low.includes('жёлт') || low.includes('желт') || low.includes('yellow') || low.includes('canary') || low.includes('lemon')) {
     return 'Жёлтый';
   }
@@ -621,11 +624,17 @@ export function classifyColorFamily(colorText: string): string {
   if (low.includes('фиолет') || low.includes('пурпур') || low.includes('сирен') || low.includes('purple') || low.includes('violet') || low.includes('lavender')) {
     return 'Фиолетовый';
   }
-  if (low.includes('коньяч') || low.includes('шампан') || low.includes('корич') || low.includes('brown') || low.includes('champagne') || low.includes('cognac')) {
+  if (low.includes('корич') || low.includes('brown')) {
+    return 'Коричневый';
+  }
+  if (low.includes('коньяч') || low.includes('шампан') || low.includes('champagne') || low.includes('cognac')) {
     return 'Коньячный / Шампань';
   }
-  if (low.includes('чёрн') || low.includes('черн') || low.includes('сер') || low.includes('black') || low.includes('gray') || low.includes('grey')) {
-    return 'Чёрный / Серый';
+  if (low.includes('чёрн') || low.includes('черн') || low.includes('black')) {
+    return 'Чёрный';
+  }
+  if (low.includes('сер') || low.includes('gray') || low.includes('grey')) {
+    return 'Серый';
   }
   if (low.includes('бел') || low.includes('бесцв') || low.includes('white') || low.includes('colorless')) {
     return 'Бесцветный (D–J)';
@@ -633,34 +642,73 @@ export function classifyColorFamily(colorText: string): string {
   return 'Фантазийный';
 }
 
+const FANCY_HUE_PATTERN =
+  /\b(fancy|faint|very\s+light|light|intense|vivid|deep|dark|yellow|pink|blue|green|red|orange|purple|violet|brown|champagne|cognac|black|gray|grey|olive|teal|canary|rose|peach|chameleon)\b|жёлт|желт|розов|голуб|син|зел|красн|оранж|фиолет|пурпур|корич|коньяч|шампан|чёрн|черн|сер|хамелеон|фантаз/i;
+
+/**
+ * Returns true if the color string represents a standard white/near-colorless
+ * GIA letter grade (D, E, F, G, H, I, J, K, L, M, ... including ranges like D-E, F+, G/H)
+ * without any fancy/colored hue modifiers.
+ */
+export function isWhiteDiamondColorGrade(rawColor: string | undefined): boolean {
+  const cleaned = (rawColor || '').trim();
+  if (!cleaned) return false;
+  if (FANCY_HUE_PATTERN.test(cleaned)) return false;
+
+  const upper = cleaned.toUpperCase();
+  // Exact single GIA letter grade D..Z or with +/- modifier or range D-E, F/G
+  if (/^[D-Z]([+-])?(\s*[-/]\s*[D-Z]([+-])?)?$/.test(upper)) {
+    return true;
+  }
+  // Common textual equivalents without fancy hue words
+  if (/^(COLORLESS|NEAR\s*COLORLESS|WHITE|БЕСЦВЕТН\S*|БЕЛЫЙ|БЕЛ\.?)$/i.test(cleaned)) {
+    return true;
+  }
+  return false;
+}
+
 export function normalizeColoredStoneColor(
   rawColor: string | undefined,
   rawFancy: string | undefined
-): { color: DiamondColor; colorFamily: string } {
+): { color: DiamondColor; colorFamily: string; isWhiteLetterGrade: boolean } {
   const c = (rawColor || '').trim();
   const f = (rawFancy || '').trim();
 
   if (!c && !f) {
-    return { color: 'G', colorFamily: 'Бесцветный (D–J)' };
+    return { color: 'G', colorFamily: 'Бесцветный (D–J)', isWhiteLetterGrade: true };
   }
 
-  const combined = f && c && !c.toLowerCase().includes(f.toLowerCase())
-    ? `${f} ${c}`
-    : c || f;
-
-  // Exact D-J match only when it's actually a standalone white diamond letter grade (or e.g. D-E)
-  const upper = combined.toUpperCase();
-  if (ALL_COLORS.includes(upper as any)) {
-    return { color: upper, colorFamily: 'Бесцветный (D–J)' };
+  // If the primary color column specifies a white diamond letter grade (D, E, F, ...)
+  // and there is no fancy colored hue in the fancy column, always route to White Diamonds.
+  if (c && isWhiteDiamondColorGrade(c) && (!f || isWhiteDiamondColorGrade(f))) {
+    const upper = c.toUpperCase();
+    const letterMatch = upper.match(/^([D-Z])/);
+    const normalized = letterMatch ? letterMatch[1] : upper;
+    return {
+      color: normalized,
+      colorFamily: 'Бесцветный (D–J)',
+      isWhiteLetterGrade: true,
+    };
   }
-  if (/^[D-J](\s*[-/]\s*[D-J])?$/.test(upper)) {
-    return { color: upper[0], colorFamily: 'Бесцветный (D–J)' };
+
+  const combined =
+    f && c && !c.toLowerCase().includes(f.toLowerCase()) ? `${f} ${c}` : c || f;
+
+  if (isWhiteDiamondColorGrade(combined)) {
+    const upper = combined.toUpperCase();
+    const letterMatch = upper.match(/^([D-Z])/);
+    return {
+      color: letterMatch ? letterMatch[1] : upper,
+      colorFamily: 'Бесцветный (D–J)',
+      isWhiteLetterGrade: true,
+    };
   }
 
-  // Otherwise preserve the rich colored stone hue / fancy description!
+  // Otherwise preserve the rich colored stone hue / fancy description
   return {
     color: combined,
     colorFamily: classifyColorFamily(combined),
+    isWhiteLetterGrade: false,
   };
 }
 
@@ -773,30 +821,41 @@ export function mapRowsToDiamonds(
       continue;
     }
 
-    const stoneType =
+    const rawStoneType =
       cell(row, mapping.stoneType) || options?.defaultStoneType || undefined;
     const shape = normalizeShape(cell(row, mapping.shape));
-    const { color, colorFamily } = normalizeColoredStoneColor(
+    const { color, colorFamily, isWhiteLetterGrade } = normalizeColoredStoneColor(
       cell(row, mapping.color),
       cell(row, mapping.fancyColor)
     );
     const clarity = normalizeClarity(cell(row, mapping.clarity));
-    const isColored = colorFamily !== 'Бесцветный (D–J)';
+    const isColored = !isWhiteLetterGrade && colorFamily !== 'Бесцветный (D–J)';
     const isDiamondOrUnspecified =
-      !stoneType ||
-      stoneType.toLowerCase().includes('бриллиант') ||
-      stoneType.toLowerCase().includes('diamond');
-    const directory: Diamond['directory'] =
-      options?.defaultDirectory ??
-      (isColored && isDiamondOrUnspecified ? 'fancy' : 'white');
+      !rawStoneType ||
+      rawStoneType.toLowerCase().includes('бриллиант') ||
+      rawStoneType.toLowerCase().includes('diamond');
+
+    // Mixed-assortment rule: any stone with a D, E, F, ... white grade is ALWAYS routed
+    // automatically to the White Diamonds directory, regardless of upload target.
+    const directory: Diamond['directory'] = isWhiteLetterGrade
+      ? 'white'
+      : isColored && isDiamondOrUnspecified
+        ? 'fancy'
+        : options?.defaultDirectory ?? 'white';
+
+    const stoneType =
+      directory === 'white'
+        ? !rawStoneType || rawStoneType === 'Цветной бриллиант'
+          ? 'Бриллиант'
+          : rawStoneType
+        : !rawStoneType || rawStoneType === 'Бриллиант'
+          ? 'Цветной бриллиант'
+          : rawStoneType;
+
     const fancyIntensity =
-      directory === 'fancy' || (isColored && isDiamondOrUnspecified)
-        ? extractFancyIntensity(color)
-        : undefined;
+      directory === 'fancy' ? extractFancyIntensity(color) : undefined;
     const fancyOvertone =
-      directory === 'fancy' || (isColored && isDiamondOrUnspecified)
-        ? extractFancyOvertone(color)
-        : undefined;
+      directory === 'fancy' ? extractFancyOvertone(color) : undefined;
 
     const rawPriceText = cell(row, mapping.priceUsd) || cell(row, mapping.pricePerCarat);
     const currency = detectCurrency(priceHeader, rawPriceText);

@@ -7,6 +7,7 @@ import {
   DiamondFilters,
   DiamondShape,
 } from '../types/diamond';
+import { isWhiteDiamondColorGrade } from './diamondMapper';
 
 export interface CatalogIndex {
   searchTokens: string[];
@@ -31,6 +32,8 @@ export interface DeduplicationResult {
 }
 
 export function isFancyDiamond(d: Diamond): boolean {
+  // Rule: stones with standard white letter grades (D, E, F, ...) are always White Diamonds
+  if (isWhiteDiamondColorGrade(d.color)) return false;
   if (d.directory === 'fancy' || d.isFancyColor) return true;
   if (!d.colorFamily || d.colorFamily === 'Бесцветный (D–J)') return false;
   if (!d.stoneType) return true;
@@ -40,6 +43,7 @@ export function isFancyDiamond(d: Diamond): boolean {
 
 export function isWhiteDiamond(d: Diamond): boolean {
   if (isFancyDiamond(d)) return false;
+  if (isWhiteDiamondColorGrade(d.color)) return true;
   if (!d.stoneType) return true;
   const st = d.stoneType.toLowerCase();
   return st === 'бриллиант' || st === 'diamond' || st === 'белый бриллиант';

@@ -116,6 +116,21 @@ export const FANCY_INTENSITIES = [
   'Fancy Dark',
 ] as const;
 
+export const ALL_FANCY_SHADES = [
+  'Жёлтый',
+  'Розовый',
+  'Синий / Голубой',
+  'Зелёный',
+  'Коньячный / Шампань',
+  'Оранжевый',
+  'Фиолетовый',
+  'Красный',
+  'Коричневый',
+  'Чёрный',
+  'Серый',
+  'Хамелеон',
+] as const;
+
 export const FANCY_INTENSITY_RANK: Record<string, number> = {
   Light: 1,
   'Fancy Light': 2,
@@ -207,7 +222,10 @@ export function getFancyDiamondImage(
   fallbackShape: DiamondShape
 ): string {
   const hay = `${color} ${colorFamily || ''}`.toLowerCase();
-  if (hay.includes('розов') || hay.includes('pink') || hay.includes('rose') || hay.includes('пурпур') || hay.includes('фиолет') || hay.includes('purple')) {
+  if (hay.includes('хамелеон') || hay.includes('chameleon')) {
+    return FANCY_IMAGE_MAP.green;
+  }
+  if (hay.includes('розов') || hay.includes('pink') || hay.includes('rose') || hay.includes('пурпур') || hay.includes('фиолет') || hay.includes('purple') || hay.includes('красн') || hay.includes('red')) {
     return FANCY_IMAGE_MAP.pink;
   }
   if (hay.includes('син') || hay.includes('голуб') || hay.includes('blue') || hay.includes('aqua')) {
@@ -255,6 +273,9 @@ export function getColorHexTint(
   }
 
   const hay = `${color} ${colorFamily || ''}`.toLowerCase();
+  if (hay.includes('хамелеон') || hay.includes('chameleon')) {
+    return { base: '#E4EDD9', deep: '#6B8E4E', facet: 'rgba(67, 97, 45, 0.34)' };
+  }
   if (hay.includes('розов') || hay.includes('pink') || hay.includes('rose')) {
     return { base: '#FCE4EC', deep: '#E99EB8', facet: 'rgba(173, 20, 87, 0.24)' };
   }
@@ -276,11 +297,17 @@ export function getColorHexTint(
   if (hay.includes('фиолет') || hay.includes('пурпур') || hay.includes('сирен') || hay.includes('purple') || hay.includes('violet') || hay.includes('amethyst')) {
     return { base: '#EDE9FE', deep: '#8B5CF6', facet: 'rgba(91, 33, 182, 0.30)' };
   }
-  if (hay.includes('коньяч') || hay.includes('шампан') || hay.includes('корич') || hay.includes('brown') || hay.includes('champagne') || hay.includes('cognac')) {
+  if (hay.includes('корич') || hay.includes('brown')) {
+    return { base: '#EFE0D1', deep: '#7C4A26', facet: 'rgba(92, 51, 23, 0.32)' };
+  }
+  if (hay.includes('коньяч') || hay.includes('шампан') || hay.includes('champagne') || hay.includes('cognac')) {
     return { base: '#F5E6D3', deep: '#B48352', facet: 'rgba(120, 74, 36, 0.28)' };
   }
-  if (hay.includes('чёрн') || hay.includes('черн') || hay.includes('сер') || hay.includes('black') || hay.includes('gray') || hay.includes('grey')) {
-    return { base: '#CBD5E1', deep: '#334155', facet: 'rgba(15, 23, 42, 0.45)' };
+  if (hay.includes('чёрн') || hay.includes('черн') || hay.includes('black')) {
+    return { base: '#CBD5E1', deep: '#111827', facet: 'rgba(15, 23, 42, 0.55)' };
+  }
+  if (hay.includes('сер') || hay.includes('gray') || hay.includes('grey')) {
+    return { base: '#E2E8F0', deep: '#94A3B8', facet: 'rgba(71, 85, 105, 0.36)' };
   }
 
   return { base: '#F5F7FA', deep: '#CBD5E1', facet: 'rgba(27, 54, 93, 0.24)' };

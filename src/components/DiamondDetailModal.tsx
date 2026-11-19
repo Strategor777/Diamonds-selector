@@ -7,6 +7,7 @@ import {
   PlayCircle,
   Scale,
   Search,
+  ShoppingBag,
   X,
 } from 'lucide-react';
 import {
@@ -23,9 +24,11 @@ interface DiamondDetailModalProps {
   diamond: Diamond | null;
   initialTab?: 'photo' | 'video' | 'cert';
   isCompared: boolean;
+  isInCart?: boolean;
   isWatched?: boolean;
   onClose: () => void;
   onToggleCompare: (diamondId: string) => void;
+  onToggleCart?: (diamondId: string) => void;
   onFindPair: (diamond: Diamond) => void;
   onToggleWatch?: (diamond: Diamond) => void;
 }
@@ -34,8 +37,10 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
   diamond,
   initialTab = 'photo',
   isCompared,
+  isInCart = false,
   onClose,
   onToggleCompare,
+  onToggleCart,
   onFindPair,
 }) => {
   const [activeTab, setActiveTab] = useState<'photo' | 'video' | 'cert'>(initialTab);
@@ -91,7 +96,7 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
             />
             <div className="min-w-0">
               <div className="text-xs text-[#5A606D] font-mono truncate">
-                {diamond.sku} · {diamond.certLab} #{diamond.certNumber} · {diamond.origin}
+                {diamond.sku} · {diamond.certLab} #{diamond.certNumber}
               </div>
               <h2 className="text-2xl font-semibold text-[#111317] truncate">
                 {diamond.stoneType && diamond.stoneType !== 'Бриллиант'
@@ -424,6 +429,30 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
 
             {/* Action Buttons */}
             <div className="space-y-2.5 pt-2">
+              {onToggleCart && (
+                <button
+                  type="button"
+                  onClick={() => onToggleCart(diamond.id)}
+                  className={`w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
+                    isInCart
+                      ? 'bg-[#065F46] text-white hover:bg-[#044935]'
+                      : 'bg-[#1B365D] text-white hover:bg-[#142947]'
+                  }`}
+                >
+                  {isInCart ? (
+                    <>
+                      <Check className="w-4 h-4" />
+                      В корзине (нажмите, чтобы убрать)
+                    </>
+                  ) : (
+                    <>
+                      <ShoppingBag className="w-4 h-4" />
+                      В корзину
+                    </>
+                  )}
+                </button>
+              )}
+
               <div className="grid grid-cols-2 gap-2.5">
                 <button
                   type="button"
@@ -453,9 +482,9 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                     onClose();
                     onFindPair(diamond);
                   }}
-                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-medium rounded-lg bg-[#1B365D] text-white hover:bg-[#142947] transition-colors whitespace-nowrap"
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-medium rounded-lg border border-[#D5D9E0] bg-white text-[#111317] hover:bg-[#F7F8FA] transition-colors whitespace-nowrap"
                 >
-                  <GitCompare className="w-4 h-4" />
+                  <GitCompare className="w-4 h-4 text-[#1B365D]" />
                   Подобрать пару
                 </button>
               </div>

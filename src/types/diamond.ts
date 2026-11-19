@@ -153,5 +153,31 @@ export type AppSection =
   | 'fancy'
   | 'pair-finder'
   | 'compare'
+  | 'cart'
   | 'sheets'
   | 'manager';
+
+export interface OrderRequest {
+  id: string;
+  requestNumber: string;
+  createdAt: string;
+  customerName: string;
+  contactPhone: string;
+  contactEmail: string;
+  preferredChannel: 'phone' | 'whatsapp' | 'telegram' | 'email';
+  comment: string;
+  items: {
+    id: string;
+    sku: string;
+    shape: DiamondShape;
+    carat: number;
+    color: string;
+    clarity: string;
+    certLab: string;
+    certNumber: string;
+    priceUsd: number;
+    currency: PriceCurrency;
+  }[];
+  totalCarat: number;
+  totalsByCurrency: Partial<Record<PriceCurrency, number>>;
+}

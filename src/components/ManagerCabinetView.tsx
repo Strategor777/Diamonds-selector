@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import {
   ALL_CLARITIES,
+  ALL_FANCY_SHADES,
   ALL_SHAPES,
   FANCY_INTENSITIES,
   SHAPE_IMAGE_MAP,
@@ -47,6 +48,7 @@ interface ManagerCabinetViewProps {
   onAddDiamond: (created: Diamond) => void;
   onDeleteDiamond: (diamondId: string) => void;
   onOpenExcelImport: () => void;
+  onLockCabinet?: () => void;
 }
 
 const MULTIPLIER_PRESETS = [1.15, 1.25, 1.35, 1.5];
@@ -54,15 +56,7 @@ const PERCENT_PRESETS = [15, 25, 35, 50];
 
 const COLOR_FAMILIES = [
   'Бесцветный (D–J)',
-  'Жёлтый',
-  'Розовый',
-  'Синий / Голубой',
-  'Зелёный',
-  'Коньячный / Шампань',
-  'Оранжевый',
-  'Фиолетовый',
-  'Красный',
-  'Чёрный / Серый',
+  ...ALL_FANCY_SHADES,
   'Фантазийный',
 ];
 
@@ -85,6 +79,7 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
   onAddDiamond,
   onDeleteDiamond,
   onOpenExcelImport,
+  onLockCabinet,
 }) => {
   const [directoryFilter, setDirectoryFilter] = useState<'all' | 'white' | 'fancy'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -449,6 +444,16 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                 <Plus className="w-4 h-4" />
                 Добавить камень
               </button>
+              {onLockCabinet && (
+                <button
+                  type="button"
+                  onClick={onLockCabinet}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-medium rounded-lg border border-[#D5D9E0] bg-white text-[#5A606D] hover:text-[#111317] hover:bg-[#F7F8FA] transition-colors whitespace-nowrap shrink-0"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  Выйти
+                </button>
+              )}
             </div>
           </div>
 
@@ -753,8 +758,7 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                               {d.sku}
                             </div>
                             <div className="text-[11px] text-[#5A606D] truncate">
-                              {isFancyStone(d) ? 'Цветные бриллианты' : 'Общий каталог'} ·{' '}
-                              {d.origin}
+                              {isFancyStone(d) ? 'Цветные бриллианты' : 'Белые бриллианты'}
                             </div>
                           </div>
                         </div>
@@ -1206,21 +1210,6 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                     className="w-full px-3 py-2 text-sm bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg"
                   />
                 </div>
-                <div>
-                  <label className="block text-[#5A606D] mb-1">Происхождение</label>
-                  <input
-                    type="text"
-                    value={editorDraft.stone.origin}
-                    onChange={(e) =>
-                      setEditorDraft((prev) =>
-                        prev
-                          ? { ...prev, stone: { ...prev.stone, origin: e.target.value } }
-                          : prev
-                      )
-                    }
-                    className="w-full px-3 py-2 text-sm bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg"
-                  />
-                </div>
               </div>
 
               {/* Section 3: 4Cs & Fancy Color */}
@@ -1323,7 +1312,7 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-[#5A606D] mb-1">Цветовая группа</label>
+                  <label className="block text-[#5A606D] mb-1">Оттенок</label>
                   <select
                     value={editorDraft.stone.colorFamily || 'Бесцветный (D–J)'}
                     onChange={(e) =>
