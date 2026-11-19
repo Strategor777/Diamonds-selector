@@ -13,16 +13,14 @@ import {
   ColumnAnalysisMeta,
   ColumnMapping,
   MAPPING_FIELDS,
-  analyzeColumns,
-  detectHeaderRowIndex,
-  mapRowsToDiamonds,
 } from '../lib/diamondMapper';
-import {
-  ParsedExcelWorkbook,
-  downloadSampleXlsx,
-  parseExcelFile,
-} from '../lib/excelImport';
+import { downloadSampleXlsx } from '../lib/excelImport';
 import { Diamond, PricingConfig } from '../types/diamond';
+import type {
+  SheetSummary,
+  WorkerInboundMessage,
+  WorkerOutboundMessage,
+} from '../workers/excelImport.worker';
 
 interface ExcelImportModalProps {
   open: boolean;
@@ -45,20 +43,50 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   onImport,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const workerRef = useRef<Worker | null>(null);
+
   const [isDragging, setIsDragging] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
+  const [isMappingAll, setIsMappingAll] = useState(false);
+  const [mapProgress, setMapProgress] = useState<{ processed: number; total: number } | null>(
+    null
+  );
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const [workbook, setWorkbook] = useState<ParsedExcelWorkbook | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [sheets, setSheets] = useState<SheetSummary[]>([]);
   const [selectedSheetIndex, setSelectedSheetIndex] = useState(0);
   const [headerRowIndex, setHeaderRowIndex] = useState(0);
+  const [headers, setHeaders] = useState<string[]>([]);
+  const [totalDataRows, setTotalDataRows] = useState(0);
   const [analysis, setAnalysis] = useState<ColumnAnalysisMeta | null>(null);
   const [mapping, setMapping] = useState<ColumnMapping | null>(null);
+
+  const [previewDiamonds, setPreviewDiamonds] = useState<Diamond[]>([]);
+  const [estimatedValidCount, setEstimatedValidCount] = useState(0);
+  const [estimatedSkippedCount, setEstimatedSkippedCount] = useState(0);
+
   const [showColumnMapper, setShowColumnMapper] = useState(false);
   const [replaceCatalog, setReplaceCatalog] = useState(false);
   const [targetDirectory, setTargetDirectory] = useState<'white' | 'fancy'>(
     defaultTargetDirectory
   );
+
+  // Refs to read latest values inside worker callback cleanly
+  const latestImportParamsRef = useRef({
+    replaceCatalog,
+    fileName,
+    targetDirectory,
+    onImport,
+    onClose,
+  });
+  latestImportParamsRef.current = {
+    replaceCatalog,
+    fileName,
+    targetDirectory,
+    onImport,
+    onClose,
+  };
 
   useEffect(() => {
     if (open) {
@@ -69,59 +97,113 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   useEffect(() => {
     if (!open) return;
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && !isMappingAll) onClose();
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [open, onClose]);
+  }, [open, onClose, isMappingAll]);
 
-  const activeSheet = useMemo(() => {
-    if (!workbook) return null;
-    return workbook.sheets[selectedSheetIndex] || workbook.sheets[0] || null;
-  }, [workbook, selectedSheetIndex]);
-
-  // Automatically locate the real header row whenever sheet changes
+  // Spin up dedicated Web Worker only while modal is open
   useEffect(() => {
-    if (!activeSheet || activeSheet.rows.length === 0) {
-      setHeaderRowIndex(0);
-      return;
-    }
-    const detectedRow = detectHeaderRowIndex(activeSheet.rows);
-    setHeaderRowIndex(detectedRow);
-  }, [activeSheet]);
+    if (!open) return;
+    if (typeof Worker === 'undefined') return;
 
-  const headers = useMemo(() => {
-    if (!activeSheet || activeSheet.rows.length <= headerRowIndex) return [];
-    return activeSheet.rows[headerRowIndex] || [];
-  }, [activeSheet, headerRowIndex]);
+    const worker = new Worker(
+      new URL('../workers/excelImport.worker.ts', import.meta.url),
+      { type: 'module' }
+    );
+    workerRef.current = worker;
 
-  // Analyze headers + cell content whenever sheet or headerRowIndex changes
+    worker.onmessage = (event: MessageEvent<WorkerOutboundMessage>) => {
+      const msg = event.data;
+      if (msg.type === 'parsed') {
+        setFileName(msg.fileName);
+        setSheets(msg.sheets);
+        setSelectedSheetIndex(msg.sheetIndex);
+        setHeaderRowIndex(msg.headerRowIndex);
+        setHeaders(msg.headers);
+        setAnalysis(msg.analysis);
+        setMapping(msg.analysis.mapping);
+        setTotalDataRows(msg.totalDataRows);
+        setIsParsing(false);
+        if (msg.analysis.mapping.carat < 0 || msg.analysis.mapping.shape < 0) {
+          setShowColumnMapper(true);
+        } else {
+          setShowColumnMapper(false);
+        }
+      } else if (msg.type === 'analyzed') {
+        setSelectedSheetIndex(msg.sheetIndex);
+        setHeaderRowIndex(msg.headerRowIndex);
+        setHeaders(msg.headers);
+        setAnalysis(msg.analysis);
+        setMapping(msg.analysis.mapping);
+        setTotalDataRows(msg.totalDataRows);
+        if (msg.analysis.mapping.carat < 0 || msg.analysis.mapping.shape < 0) {
+          setShowColumnMapper(true);
+        }
+      } else if (msg.type === 'previewReady') {
+        setPreviewDiamonds(msg.previewDiamonds);
+        setEstimatedValidCount(msg.estimatedValidCount);
+        setEstimatedSkippedCount(msg.estimatedSkippedCount);
+        setTotalDataRows(msg.totalDataRows);
+      } else if (msg.type === 'progress') {
+        setMapProgress({ processed: msg.processed, total: msg.total });
+      } else if (msg.type === 'mappedAll') {
+        setIsMappingAll(false);
+        setMapProgress(null);
+        const latest = latestImportParamsRef.current;
+        if (msg.diamonds.length > 0 && latest.fileName) {
+          latest.onImport(
+            msg.diamonds,
+            latest.replaceCatalog,
+            latest.fileName,
+            latest.targetDirectory
+          );
+          setFileName(null);
+          setSheets([]);
+          setPreviewDiamonds([]);
+          latest.onClose();
+        } else {
+          setErrorMsg('Не найдено валидных строк с весом в каратах для импорта.');
+        }
+      } else if (msg.type === 'error') {
+        setIsParsing(false);
+        setIsMappingAll(false);
+        setMapProgress(null);
+        setErrorMsg(msg.message);
+      }
+    };
+
+    worker.onerror = () => {
+      setIsParsing(false);
+      setIsMappingAll(false);
+      setMapProgress(null);
+      setErrorMsg('Ошибка фонового обработчика Excel. Попробуйте снова.');
+    };
+
+    return () => {
+      worker.terminate();
+      workerRef.current = null;
+    };
+  }, [open]);
+
+  // Request instant lightweight preview (first 120 rows) whenever mapping/pricing/directory changes
   useEffect(() => {
-    if (!activeSheet || activeSheet.rows.length === 0) {
-      setAnalysis(null);
-      setMapping(null);
-      return;
-    }
-    const result = analyzeColumns(activeSheet.rows, headerRowIndex);
-    setAnalysis(result);
-    setMapping(result.mapping);
-    // Open column mapper automatically if required columns weren't recognized
-    if (result.mapping.carat < 0 || result.mapping.shape < 0) {
-      setShowColumnMapper(true);
-    }
-  }, [activeSheet, headerRowIndex]);
-
-  const parsedResult = useMemo(() => {
-    if (!activeSheet || !mapping || activeSheet.rows.length <= headerRowIndex + 1) {
-      return { diamonds: [], skippedRows: 0 };
-    }
-    return mapRowsToDiamonds(activeSheet.rows, mapping, 'xlsx', headerRowIndex, {
-      defaultDirectory: targetDirectory,
-      defaultStoneType:
-        targetDirectory === 'fancy' ? 'Цветной бриллиант' : undefined,
-      pricingConfig,
-    });
-  }, [activeSheet, mapping, headerRowIndex, targetDirectory, pricingConfig]);
+    if (!workerRef.current || !fileName || !mapping) return;
+    const msg: WorkerInboundMessage = {
+      type: 'preview',
+      sheetIndex: selectedSheetIndex,
+      headerRowIndex,
+      mapping,
+      options: {
+        defaultDirectory: targetDirectory,
+        defaultStoneType:
+          targetDirectory === 'fancy' ? 'Цветной бриллиант' : undefined,
+        pricingConfig,
+      },
+    };
+    workerRef.current.postMessage(msg);
+  }, [fileName, selectedSheetIndex, headerRowIndex, mapping, targetDirectory, pricingConfig]);
 
   const detectedSectionSummary = useMemo(() => {
     if (!mapping || !analysis) return [];
@@ -139,20 +221,47 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   const handleFile = async (file: File) => {
     setErrorMsg(null);
     setIsParsing(true);
+    setPreviewDiamonds([]);
     try {
-      const parsed = await parseExcelFile(file);
-      setWorkbook(parsed);
-      setSelectedSheetIndex(0);
-      setShowColumnMapper(false);
+      const buffer = await file.arrayBuffer();
+      if (workerRef.current) {
+        const msg: WorkerInboundMessage = {
+          type: 'parse',
+          buffer,
+          fileName: file.name,
+        };
+        workerRef.current.postMessage(msg, [buffer]);
+      } else {
+        throw new Error('Фоновый обработчик недоступен в текущей среде.');
+      }
     } catch (err: any) {
       setErrorMsg(
         err?.message ||
           'Не удалось прочитать файл. Убедитесь, что это корректный документ .xlsx, .xls или .csv.'
       );
-      setWorkbook(null);
-    } finally {
       setIsParsing(false);
     }
+  };
+
+  const handleSheetChange = (nextIdx: number) => {
+    setSelectedSheetIndex(nextIdx);
+    if (!workerRef.current) return;
+    const msg: WorkerInboundMessage = {
+      type: 'analyze',
+      sheetIndex: nextIdx,
+    };
+    workerRef.current.postMessage(msg);
+  };
+
+  const handleHeaderRowChange = (nextRow: number) => {
+    setHeaderRowIndex(nextRow);
+    if (!workerRef.current) return;
+    const msg: WorkerInboundMessage = {
+      type: 'analyze',
+      sheetIndex: selectedSheetIndex,
+      headerRowIndex: nextRow,
+    };
+    workerRef.current.postMessage(msg);
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -173,24 +282,41 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   };
 
   const handleConfirmImport = () => {
-    if (parsedResult.diamonds.length === 0 || !workbook) return;
-    onImport(
-      parsedResult.diamonds,
-      replaceCatalog,
-      workbook.fileName,
-      targetDirectory
-    );
-    setWorkbook(null);
-    onClose();
+    if (!workerRef.current || !mapping || !fileName || estimatedValidCount === 0) return;
+    setErrorMsg(null);
+    setIsMappingAll(true);
+    setMapProgress({ processed: 0, total: totalDataRows });
+    const msg: WorkerInboundMessage = {
+      type: 'mapAll',
+      sheetIndex: selectedSheetIndex,
+      headerRowIndex,
+      mapping,
+      options: {
+        defaultDirectory: targetDirectory,
+        defaultStoneType:
+          targetDirectory === 'fancy' ? 'Цветной бриллиант' : undefined,
+        pricingConfig,
+      },
+    };
+    workerRef.current.postMessage(msg);
   };
 
   const resetState = () => {
-    setWorkbook(null);
+    setFileName(null);
+    setSheets([]);
+    setPreviewDiamonds([]);
+    setEstimatedValidCount(0);
+    setEstimatedSkippedCount(0);
     setErrorMsg(null);
     setShowColumnMapper(false);
   };
 
-  const maxHeaderRowOptions = activeSheet ? Math.min(activeSheet.rows.length - 1, 14) : 0;
+  const activeSheetRowCount = sheets[selectedSheetIndex]?.rowCount || 0;
+  const maxHeaderRowOptions = Math.min(Math.max(0, activeSheetRowCount - 1), 14);
+  const progressPct =
+    mapProgress && mapProgress.total > 0
+      ? Math.min(100, Math.round((mapProgress.processed / mapProgress.total) * 100))
+      : 0;
 
   return (
     <div
@@ -199,7 +325,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
       aria-modal="true"
       aria-label="Импорт бриллиантов из файла Excel (.xlsx)"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget && !isMappingAll) onClose();
       }}
     >
       <div className="bg-white border border-[#E4E6EB] rounded-xl max-w-4xl w-full overflow-hidden shadow-2xl my-auto">
@@ -212,17 +338,18 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 Импорт каталога камней из .xlsx
               </h2>
               <p className="text-xs text-[#5A606D]">
-                Автоматический анализ строки заголовков, типов данных и разделов файла
-                (.xlsx, .xls, .csv)
+                Фоновая обработка больших прайс-листов (до 50 000+ строк) с автодедупликацией
+                и анализом заголовков (.xlsx, .xls, .csv)
               </p>
             </div>
           </div>
 
           <button
             type="button"
+            disabled={isMappingAll}
             onClick={onClose}
             aria-label="Закрыть окно импорта"
-            className="w-10 h-10 rounded-lg border border-[#E4E6EB] flex items-center justify-center text-[#5A606D] hover:text-[#111317] hover:bg-[#F7F8FA] transition-colors shrink-0"
+            className="w-10 h-10 rounded-lg border border-[#E4E6EB] flex items-center justify-center text-[#5A606D] hover:text-[#111317] hover:bg-[#F7F8FA] disabled:opacity-40 transition-colors shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
@@ -236,7 +363,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
             </div>
           )}
 
-          {!workbook ? (
+          {!fileName ? (
             <div className="space-y-4">
               <div
                 onDragOver={(e) => {
@@ -245,7 +372,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 }}
                 onDragLeave={() => setIsDragging(false)}
                 onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => !isParsing && fileInputRef.current?.click()}
                 className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors ${
                   isDragging
                     ? 'border-[#1B365D] bg-[#F4F7FB]'
@@ -262,12 +389,12 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 <Upload className="w-9 h-9 text-[#1B365D] mx-auto mb-3" />
                 <div className="text-sm font-semibold text-[#111317]">
                   {isParsing
-                    ? 'Изучение структуры и заголовков файла...'
+                    ? 'Фоновое чтение и анализ структуры файла...'
                     : 'Перетащите файл .xlsx сюда или нажмите для выбора'}
                 </div>
                 <p className="text-xs text-[#5A606D] mt-1.5 max-w-md mx-auto">
-                  Система изучит заголовки и значения столбцов (даже если перед таблицей
-                  есть шапка прайс-листа) и подберёт нужные разделы.
+                  Разбор таблицы выполняется в отдельном потоке Web Worker без блокировки
+                  интерфейса — поддерживаются прайс-листы на 30 000–50 000 строк.
                 </p>
               </div>
 
@@ -278,7 +405,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 </div>
                 <button
                   type="button"
-                  onClick={downloadSampleXlsx}
+                  onClick={() => void downloadSampleXlsx()}
                   className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-lg border border-[#D5D9E0] bg-white text-[#111317] hover:bg-[#F7F8FA] transition-colors whitespace-nowrap"
                 >
                   <Download className="w-3.5 h-3.5 text-[#1B365D]" />
@@ -293,21 +420,21 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 <div className="space-y-0.5">
                   <div className="text-xs text-[#5A606D]">Загруженный файл</div>
                   <div className="text-sm font-semibold text-[#111317] font-mono">
-                    {workbook.fileName}
+                    {fileName}
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2.5 flex-wrap">
-                  {workbook.sheets.length > 1 && (
+                  {sheets.length > 1 && (
                     <select
                       value={selectedSheetIndex}
-                      onChange={(e) => setSelectedSheetIndex(Number(e.target.value))}
+                      onChange={(e) => handleSheetChange(Number(e.target.value))}
                       aria-label="Выбор листа Excel"
                       className="px-3 py-1.5 text-xs bg-white border border-[#D5D9E0] rounded-lg"
                     >
-                      {workbook.sheets.map((s, idx) => (
+                      {sheets.map((s, idx) => (
                         <option key={s.name} value={idx}>
-                          Лист: {s.name} ({s.rows.length} строк)
+                          Лист: {s.name} ({s.rowCount.toLocaleString('ru-RU')} строк)
                         </option>
                       ))}
                     </select>
@@ -316,7 +443,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                   {maxHeaderRowOptions > 0 && (
                     <select
                       value={headerRowIndex}
-                      onChange={(e) => setHeaderRowIndex(Number(e.target.value))}
+                      onChange={(e) => handleHeaderRowChange(Number(e.target.value))}
                       aria-label="Выбор строки заголовков"
                       className="px-3 py-1.5 text-xs bg-white border border-[#D5D9E0] rounded-lg"
                     >
@@ -343,8 +470,9 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
 
                   <button
                     type="button"
+                    disabled={isMappingAll}
                     onClick={resetState}
-                    className="px-3 py-1.5 text-xs font-medium rounded-lg border border-[#D5D9E0] bg-white text-[#5A606D] hover:text-[#111317] transition-colors whitespace-nowrap"
+                    className="px-3 py-1.5 text-xs font-medium rounded-lg border border-[#D5D9E0] bg-white text-[#5A606D] hover:text-[#111317] disabled:opacity-40 transition-colors whitespace-nowrap"
                   >
                     Другой файл
                   </button>
@@ -358,8 +486,9 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                     <span className="font-semibold text-[#111317]">
                       Определённые разделы по заголовкам (строка {headerRowIndex + 1})
                     </span>
-                    <span className="text-[#5A606D]">
-                      Всего колонок в файле: {headers.length}
+                    <span className="text-[#5A606D] font-mono tabular-nums">
+                      Колонок: {headers.length} · Строк данных:{' '}
+                      {totalDataRows.toLocaleString('ru-RU')}
                     </span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-1.5 text-xs">
@@ -435,7 +564,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                           : 'text-[#5A606D] hover:text-[#111317]'
                       }`}
                     >
-                      Общий каталог
+                      Белые бриллианты
                     </button>
                     <button
                       type="button"
@@ -467,19 +596,41 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-sm">
                   <CheckCircle2 className="w-4 h-4 text-[#0F5132]" />
-                  <span className="font-semibold text-[#111317]">
-                    Готово к импорту камней: {parsedResult.diamonds.length}
+                  <span className="font-semibold text-[#111317] font-mono tabular-nums">
+                    К импорту: {estimatedValidCount.toLocaleString('ru-RU')} камней
                   </span>
-                  {parsedResult.skippedRows > 0 && (
-                    <span className="text-xs text-[#5A606D]">
-                      (пропущено строк без веса в каратах: {parsedResult.skippedRows})
+                  {estimatedSkippedCount > 0 && (
+                    <span className="text-xs text-[#5A606D] font-mono tabular-nums">
+                      (ориентировочно пропущено без каратности:{' '}
+                      {estimatedSkippedCount.toLocaleString('ru-RU')})
                     </span>
                   )}
                 </div>
               </div>
 
+              {/* Chunked Progress Bar during 30k-50k Import */}
+              {isMappingAll && mapProgress && (
+                <div className="p-4 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-medium text-[#111317]">
+                      Обработка и дедупликация строк ассортимента...
+                    </span>
+                    <span className="font-mono tabular-nums text-[#1B365D] font-semibold">
+                      {mapProgress.processed.toLocaleString('ru-RU')} /{' '}
+                      {mapProgress.total.toLocaleString('ru-RU')} ({progressPct}%)
+                    </span>
+                  </div>
+                  <div className="h-2 bg-[#E2E8F0] rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-[#1B365D] transition-all duration-150"
+                      style={{ width: `${progressPct}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
               {/* Preview Table */}
-              {parsedResult.diamonds.length === 0 ? (
+              {previewDiamonds.length === 0 ? (
                 <div className="p-6 border border-[#E4E6EB] rounded-lg text-center text-xs text-[#5A606D]">
                   Не удалось распознать камни при выбранной строке заголовков.
                   Попробуйте выбрать другую строку заголовков выше или укажите столбцы
@@ -512,7 +663,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#E4E6EB]">
-                        {parsedResult.diamonds.slice(0, 12).map((d) => (
+                        {previewDiamonds.slice(0, 12).map((d) => (
                           <tr key={d.id} className="hover:bg-[#FAFAFA]">
                             <td className="p-2.5 font-mono text-[#5A606D]">{d.sku}</td>
                             <td className="p-2.5 text-[#111317]">
@@ -543,9 +694,9 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                       </tbody>
                     </table>
                   </div>
-                  {parsedResult.diamonds.length > 12 && (
-                    <div className="px-3 py-2 bg-[#FAFAFA] border-t border-[#E4E6EB] text-xs text-[#5A606D]">
-                      Показаны первые 12 из {parsedResult.diamonds.length} камней
+                  {estimatedValidCount > 12 && (
+                    <div className="px-3 py-2 bg-[#FAFAFA] border-t border-[#E4E6EB] text-xs text-[#5A606D] font-mono tabular-nums">
+                      Предпросмотр: первые 12 из ~{estimatedValidCount.toLocaleString('ru-RU')} камней
                     </div>
                   )}
                 </div>
@@ -555,25 +706,28 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
               <div className="flex items-center justify-end gap-3 pt-2">
                 <button
                   type="button"
+                  disabled={isMappingAll}
                   onClick={onClose}
-                  className="px-4 py-2 text-xs font-medium rounded-lg border border-[#D5D9E0] bg-white text-[#111317] hover:bg-[#F7F8FA] transition-colors"
+                  className="px-4 py-2 text-xs font-medium rounded-lg border border-[#D5D9E0] bg-white text-[#111317] hover:bg-[#F7F8FA] disabled:opacity-40 transition-colors"
                 >
                   Отмена
                 </button>
                 <button
                   type="button"
                   onClick={handleConfirmImport}
-                  disabled={parsedResult.diamonds.length === 0}
+                  disabled={estimatedValidCount === 0 || isMappingAll}
                   className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-medium rounded-lg bg-[#1B365D] text-white hover:bg-[#142947] disabled:opacity-50 transition-colors"
                 >
                   <Upload className="w-3.5 h-3.5" />
-                  {replaceCatalog
-                    ? targetDirectory === 'fancy'
-                      ? `Заменить директорию «Цветные бриллианты» (${parsedResult.diamonds.length} камней)`
-                      : `Заменить каталог (${parsedResult.diamonds.length} камней)`
-                    : targetDirectory === 'fancy'
-                      ? `Добавить в «Цветные бриллианты» (${parsedResult.diamonds.length} камней)`
-                      : `Добавить в каталог (${parsedResult.diamonds.length} камней)`}
+                  {isMappingAll
+                    ? `Загрузка... ${progressPct}%`
+                    : replaceCatalog
+                      ? targetDirectory === 'fancy'
+                        ? `Заменить директорию «Цветные бриллианты» (~${estimatedValidCount.toLocaleString('ru-RU')})`
+                        : `Заменить каталог (~${estimatedValidCount.toLocaleString('ru-RU')})`
+                      : targetDirectory === 'fancy'
+                        ? `Добавить в «Цветные бриллианты» (~${estimatedValidCount.toLocaleString('ru-RU')})`
+                        : `Добавить в каталог (~${estimatedValidCount.toLocaleString('ru-RU')})`}
                 </button>
               </div>
             </div>

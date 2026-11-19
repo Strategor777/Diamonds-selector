@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   FileSpreadsheet,
   RotateCcw,
@@ -8,11 +8,15 @@ import {
 import {
   ALL_CLARITIES,
   ALL_COLORS,
+  ALL_FANCY_CLARITIES,
   ALL_SHAPES,
+  FANCY_INTENSITIES,
   SHAPE_SHORT_RU,
+  extractFancyIntensity,
   formatStonePrice,
   getColorHexTint,
 } from '../data/diamonds';
+import { isFancyDiamond } from '../lib/catalogEngine';
 import {
   Diamond,
   DiamondClarity,
@@ -24,6 +28,7 @@ import {
 import { DiamondCard } from './DiamondCard';
 import { DiamondShapeIcon } from './DiamondShapeIcon';
 import { NumericInput } from './NumericInput';
+import { PaginationBar } from './PaginationBar';
 
 interface CatalogSectionProps {
   diamonds: Diamond[];
@@ -43,6 +48,8 @@ interface CatalogSectionProps {
   onOpenExcelImport: () => void;
 }
 
+const WHITE_COLOR_SET = new Set<string>(ALL_COLORS);
+
 export const CatalogSection: React.FC<CatalogSectionProps> = ({
   diamonds,
   catalog,
@@ -60,9 +67,66 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
   onToggleWatch,
   onOpenExcelImport,
 }) => {
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(24);
+
+  // Determine active directory mode (White Diamonds vs Colored Diamonds vs All)
+  const isWhiteDirectoryOnly =
+    filters.stoneTypes.length === 1 && filters.stoneTypes[0] === 'Бриллиант';
+  const isFancyDirectoryOnly =
+    filters.stoneTypes.length === 1 && filters.stoneTypes[0] === 'Цветной бриллиант';
+
+  // Reset to page 1 when filtered list length or active sorting/filters change
+  useEffect(() => {
+    setPage(1);
+  }, [
+    diamonds.length,
+    filters.sortBy,
+    filters.stoneTypes,
+    filters.shapes,
+    filters.colors,
+    filters.colorFamilies,
+    filters.fancyIntensities,
+    filters.clarities,
+    filters.certLab,
+    filters.searchQuery,
+  ]);
+
+  const comparedSet = useMemo(() => new Set(comparedIds), [comparedIds]);
+
+  // Extract available directory types from the entire catalog (always ordered with Бриллиант first)
+  const directoryTypes = useMemo(() => {
+    const typeSet = new Set<string>();
+    let hasWhite = false;
+    let hasFancy = false;
+
+    for (let i = 0; i < catalog.length; i++) {
+      const d = catalog[i];
+      if (isFancyDiamond(d)) {
+        hasFancy = true;
+        typeSet.add('Цветной бриллиант');
+      } else {
+        const st = d.stoneType || 'Бриллиант';
+        if (st === 'Бриллиант') hasWhite = true;
+        typeSet.add(st);
+      }
+    }
+
+    const ordered: string[] = [];
+    if (hasWhite || typeSet.has('Бриллиант')) ordered.push('Бриллиант');
+    if (hasFancy || typeSet.has('Цветной бриллиант')) ordered.push('Цветной бриллиант');
+    for (const st of typeSet) {
+      if (st !== 'Бриллиант' && st !== 'Цветной бриллиант') {
+        ordered.push(st);
+      }
+    }
+    return ordered;
+  }, [catalog]);
+
+  // Compute facets strictly scoped to the active directory slice (single O(n) pass for 50k stones)
   const facets = useMemo(() => {
-    const stoneTypesSet = new Set<string>();
     const colorFamiliesSet = new Set<string>();
+    const fancyIntensityCounts = new Map<string, number>();
     const colorsSet = new Set<string>();
     const claritiesSet = new Set<string>();
     const labsSet = new Set<string>(['GIA', 'IGI', 'HRD']);
@@ -72,13 +136,47 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
     let maxCarat = 0;
     let minPrice = Infinity;
     let maxPrice = 0;
+    let scopeTotalCount = 0;
 
     const currencyCounts = new Map<PriceCurrency, number>();
 
-    for (const d of catalog) {
-      stoneTypesSet.add(d.stoneType || 'Бриллиант');
-      colorFamiliesSet.add(d.colorFamily || 'Бесцветный (D–J)');
-      colorsSet.add(d.color);
+    for (let i = 0; i < catalog.length; i++) {
+      const d = catalog[i];
+      const fancy = isFancyDiamond(d);
+
+      if (isWhiteDirectoryOnly) {
+        if (fancy || (d.stoneType || 'Бриллиант') !== 'Бриллиант') continue;
+      } else if (isFancyDirectoryOnly) {
+        if (!fancy) continue;
+      }
+
+      scopeTotalCount++;
+
+      const fam = d.colorFamily || 'Бесцветный (D–J)';
+      if (!isFancyDirectoryOnly || fam !== 'Бесцветный (D–J)') {
+        colorFamiliesSet.add(fam);
+      }
+
+      if (fancy) {
+        const intensity = d.fancyIntensity || extractFancyIntensity(d.color);
+        fancyIntensityCounts.set(
+          intensity,
+          (fancyIntensityCounts.get(intensity) || 0) + 1
+        );
+      }
+
+      if (isWhiteDirectoryOnly) {
+        if (WHITE_COLOR_SET.has(d.color.toUpperCase())) {
+          colorsSet.add(d.color.toUpperCase());
+        }
+      } else if (isFancyDirectoryOnly) {
+        if (!WHITE_COLOR_SET.has(d.color.toUpperCase())) {
+          colorsSet.add(d.color);
+        }
+      } else {
+        colorsSet.add(d.color);
+      }
+
       claritiesSet.add(d.clarity);
       if (d.certLab) labsSet.add(d.certLab);
       shapeCounts.set(d.shape, (shapeCounts.get(d.shape) || 0) + 1);
@@ -101,33 +199,38 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
       }
     }
 
-    const hasColoredStones = Array.from(colorFamiliesSet).some(
-      (f) => f !== 'Бесцветный (D–J)'
-    );
+    const hasColoredStones =
+      !isWhiteDirectoryOnly &&
+      Array.from(colorFamiliesSet).some((f) => f !== 'Бесцветный (D–J)');
     const hasCustomStoneTypes =
-      stoneTypesSet.size > 1 ||
-      (stoneTypesSet.size === 1 && !stoneTypesSet.has('Бриллиант'));
+      directoryTypes.length > 1 ||
+      (directoryTypes.length === 1 && directoryTypes[0] !== 'Бриллиант');
 
-    const availableColors = hasColoredStones
-      ? Array.from(colorsSet)
-      : ALL_COLORS;
+    const availableColors = isWhiteDirectoryOnly
+      ? ALL_COLORS
+      : hasColoredStones
+        ? Array.from(colorsSet)
+        : ALL_COLORS;
 
-    const extraClarities = Array.from(claritiesSet).filter(
-      (cl) => !ALL_CLARITIES.includes(cl)
-    );
-    const availableClarities =
-      extraClarities.length > 0 && claritiesSet.size > 0
+    const baseClarities = isFancyDirectoryOnly ? ALL_FANCY_CLARITIES : ALL_CLARITIES;
+    const extraClarities = isWhiteDirectoryOnly
+      ? []
+      : Array.from(claritiesSet).filter((cl) => !baseClarities.includes(cl));
+
+    const availableClarities = isWhiteDirectoryOnly
+      ? ALL_CLARITIES
+      : extraClarities.length > 0 && claritiesSet.size > 0
         ? Array.from(
             new Set([
-              ...ALL_CLARITIES.filter((c) => claritiesSet.has(c)),
+              ...baseClarities.filter((c) => claritiesSet.has(c)),
               ...extraClarities,
             ])
           )
-        : ALL_CLARITIES;
+        : baseClarities;
 
     return {
-      stoneTypes: Array.from(stoneTypesSet),
       colorFamilies: Array.from(colorFamiliesSet),
+      fancyIntensityCounts,
       availableColors,
       availableClarities,
       availableLabs: ['ALL', ...Array.from(labsSet)],
@@ -135,6 +238,7 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
       hasColoredStones,
       hasCustomStoneTypes,
       primaryCurrency,
+      scopeTotalCount,
       boundMinCarat: Number.isFinite(minCarat)
         ? Math.max(0.05, Math.floor(minCarat * 20) / 20)
         : 0.2,
@@ -146,7 +250,54 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
       boundMaxPrice:
         maxPrice > 0 ? Math.max(95000, Math.ceil(maxPrice / 1000) * 1000) : 95000,
     };
-  }, [catalog]);
+  }, [catalog, directoryTypes, isWhiteDirectoryOnly, isFancyDirectoryOnly]);
+
+  // Select a dedicated directory cleanly (switching strips incompatible characteristics)
+  const handleSelectDirectory = (stoneType: string) => {
+    onChangeFilters((prev) => {
+      const isAlreadyExclusive =
+        prev.stoneTypes.length === 1 && prev.stoneTypes[0] === stoneType;
+
+      // Clicking the active directory again resets directory selection to all
+      if (isAlreadyExclusive) {
+        return {
+          ...prev,
+          stoneTypes: [],
+          colorFamilies: [],
+          fancyIntensities: [],
+          colors: [],
+        };
+      }
+
+      if (stoneType === 'Бриллиант') {
+        return {
+          ...prev,
+          stoneTypes: ['Бриллиант'],
+          colorFamilies: [],
+          fancyIntensities: [],
+          colors: prev.colors.filter((c) => WHITE_COLOR_SET.has(c.toUpperCase())),
+          clarities: prev.clarities.filter((cl) => ALL_CLARITIES.includes(cl)),
+        };
+      }
+
+      if (stoneType === 'Цветной бриллиант') {
+        return {
+          ...prev,
+          stoneTypes: ['Цветной бриллиант'],
+          colorFamilies: prev.colorFamilies.filter((f) => f !== 'Бесцветный (D–J)'),
+          colors: prev.colors.filter((c) => !WHITE_COLOR_SET.has(c.toUpperCase())),
+        };
+      }
+
+      return {
+        ...prev,
+        stoneTypes: [stoneType],
+        colorFamilies: [],
+        fancyIntensities: [],
+        colors: [],
+      };
+    });
+  };
 
   const toggleShape = (shape: DiamondShape) => {
     onChangeFilters((prev) => ({
@@ -157,21 +308,21 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
     }));
   };
 
-  const toggleStoneType = (stoneType: string) => {
-    onChangeFilters((prev) => ({
-      ...prev,
-      stoneTypes: prev.stoneTypes.includes(stoneType)
-        ? prev.stoneTypes.filter((s) => s !== stoneType)
-        : [...prev.stoneTypes, stoneType],
-    }));
-  };
-
   const toggleColorFamily = (family: string) => {
     onChangeFilters((prev) => ({
       ...prev,
       colorFamilies: prev.colorFamilies.includes(family)
         ? prev.colorFamilies.filter((f) => f !== family)
         : [...prev.colorFamilies, family],
+    }));
+  };
+
+  const toggleFancyIntensity = (intensity: string) => {
+    onChangeFilters((prev) => ({
+      ...prev,
+      fancyIntensities: prev.fancyIntensities.includes(intensity)
+        ? prev.fancyIntensities.filter((item) => item !== intensity)
+        : [...prev.fancyIntensities, intensity],
     }));
   };
 
@@ -197,6 +348,7 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
     filters.shapes.length > 0 ||
     filters.stoneTypes.length > 0 ||
     filters.colorFamilies.length > 0 ||
+    filters.fancyIntensities.length > 0 ||
     filters.colors.length > 0 ||
     filters.clarities.length > 0 ||
     filters.minCarat > facets.boundMinCarat + 0.25 ||
@@ -204,12 +356,27 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
     filters.minPrice > facets.boundMinPrice ||
     filters.maxPrice < facets.boundMaxPrice ||
     filters.certLab !== 'ALL' ||
-    filters.onlyPriceDrops ||
     filters.searchQuery.trim() !== '';
 
   const priceStep = facets.primaryCurrency === 'RUB' ? 5000 : 500;
   const sliderMaxCarat = Math.max(facets.boundMaxCarat, filters.maxCarat);
   const sliderMaxPrice = Math.max(facets.boundMaxPrice, filters.maxPrice);
+
+  // Paginated slice (renders only 24/48/96 DOM cards even on 50,000-stone catalogs)
+  const totalPages = Math.max(1, Math.ceil(diamonds.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const visibleDiamonds = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return diamonds.slice(start, start + pageSize);
+  }, [diamonds, safePage, pageSize]);
+
+  const handlePageChange = (nextPage: number) => {
+    setPage(nextPage);
+    const el = document.getElementById('catalog-results-top');
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
 
   return (
     <section id="catalog-grid" className="max-w-7xl mx-auto px-6 py-10 space-y-8">
@@ -219,7 +386,11 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
           <div className="flex items-center gap-2.5">
             <SlidersHorizontal className="w-4 h-4 text-[#1B365D]" />
             <h2 className="text-xl font-semibold text-[#111317]">
-              Параметры подбора камней
+              {isWhiteDirectoryOnly
+                ? 'Директория: Белые бриллианты'
+                : isFancyDirectoryOnly
+                  ? 'Директория: Цветные бриллианты'
+                  : 'Параметры подбора камней'}
             </h2>
           </div>
 
@@ -260,22 +431,23 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
           </div>
         </div>
 
-        {/* Stone Type & Color Family Row (shown automatically when colored gems / multiple minerals are loaded) */}
+        {/* Directory Switcher & Colored Characteristics Row */}
         {(facets.hasCustomStoneTypes || facets.hasColoredStones) && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-2">
             {facets.hasCustomStoneTypes && (
               <div className="space-y-2">
                 <div className="text-xs font-medium text-[#5A606D]">
-                  Минерал / Тип камня
+                  Директория / Тип камня
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {facets.stoneTypes.map((st) => {
-                    const active = filters.stoneTypes.includes(st);
+                  {directoryTypes.map((st) => {
+                    const active =
+                      filters.stoneTypes.length === 1 && filters.stoneTypes[0] === st;
                     return (
                       <button
                         key={st}
                         type="button"
-                        onClick={() => toggleStoneType(st)}
+                        onClick={() => handleSelectDirectory(st)}
                         className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors whitespace-nowrap ${
                           active
                             ? 'bg-[#1B365D] border-[#1B365D] text-white'
@@ -286,11 +458,29 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
                       </button>
                     );
                   })}
+                  {filters.stoneTypes.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onChangeFilters((prev) => ({
+                          ...prev,
+                          stoneTypes: [],
+                          colorFamilies: [],
+                          fancyIntensities: [],
+                          colors: [],
+                        }))
+                      }
+                      className="px-2.5 py-1.5 text-xs font-medium rounded-md border border-transparent text-[#5A606D] hover:text-[#111317] hover:bg-[#F1F3F5] transition-colors whitespace-nowrap"
+                    >
+                      Все категории
+                    </button>
+                  )}
                 </div>
               </div>
             )}
 
-            {facets.hasColoredStones && (
+            {/* Colored-only characteristics: Color Family (hidden completely when White Diamonds directory is active) */}
+            {!isWhiteDirectoryOnly && facets.hasColoredStones && (
               <div className="space-y-2">
                 <div className="text-xs font-medium text-[#5A606D]">
                   Цветовая группа / Оттенок
@@ -322,6 +512,38 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Fancy Intensity Row — shown ONLY when Colored Diamonds directory is active */}
+        {isFancyDirectoryOnly && (
+          <div className="space-y-2.5">
+            <div className="text-xs font-medium text-[#5A606D]">
+              Интенсивность окраски (Fancy Intensity)
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {FANCY_INTENSITIES.map((intensity) => {
+                const active = filters.fancyIntensities.includes(intensity);
+                const count = facets.fancyIntensityCounts.get(intensity) || 0;
+                return (
+                  <button
+                    key={intensity}
+                    type="button"
+                    onClick={() => toggleFancyIntensity(intensity)}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors whitespace-nowrap tabular-nums ${
+                      active
+                        ? 'bg-[#1B365D] border-[#1B365D] text-white'
+                        : count > 0
+                          ? 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                          : 'bg-[#FAFAFA]/60 border-[#E4E6EB]/70 text-[#8A919E] hover:text-[#111317]'
+                    }`}
+                  >
+                    {intensity}
+                    {count > 0 ? ` (${count})` : ''}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -357,12 +579,18 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
 
         {/* Color, Clarity, Carat, Price Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 pt-2">
-          {/* Color */}
+          {/* Color — White D-J grid for White directory; Fancy shades for Colored directory */}
           <div className="space-y-2.5">
             <div className="text-xs font-medium text-[#5A606D]">
-              {facets.hasColoredStones ? 'Цвет / Оттенок' : 'Цвет (D–J)'}
+              {isWhiteDirectoryOnly
+                ? 'Цвет (D–J)'
+                : isFancyDirectoryOnly
+                  ? 'Оттенок / Fancy-цвет'
+                  : facets.hasColoredStones
+                    ? 'Цвет / Оттенок'
+                    : 'Цвет (D–J)'}
             </div>
-            {!facets.hasColoredStones ? (
+            {isWhiteDirectoryOnly || !facets.hasColoredStones ? (
               <div className="grid grid-cols-7 gap-1">
                 {ALL_COLORS.map((color) => {
                   const active = filters.colors.includes(color);
@@ -384,7 +612,7 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
               </div>
             ) : (
               <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pr-1">
-                {facets.availableColors.map((color) => {
+                {facets.availableColors.slice(0, 60).map((color) => {
                   const active = filters.colors.includes(color);
                   return (
                     <button
@@ -546,7 +774,7 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
           </div>
         </div>
 
-        {/* Bottom Filter Bar: Lab, Price Drops, Sort */}
+        {/* Bottom Filter Bar: Lab, Count, Sort */}
         <div className="pt-4 border-t border-[#E4E6EB] flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-1.5 flex-wrap">
@@ -576,8 +804,12 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
           </div>
 
           <div className="flex items-center gap-3">
-            <span className="text-xs text-[#5A606D] tabular-nums">
-              Показано {diamonds.length} из {totalCount}
+            <span className="text-xs text-[#5A606D] font-mono tabular-nums">
+              Найдено {diamonds.length.toLocaleString('ru-RU')} из{' '}
+              {(isWhiteDirectoryOnly || isFancyDirectoryOnly
+                ? facets.scopeTotalCount
+                : totalCount
+              ).toLocaleString('ru-RU')}
             </span>
             <select
               value={filters.sortBy}
@@ -599,59 +831,76 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
         </div>
       </div>
 
-      {/* Results Grid */}
-      {totalCount === 0 && fancyCount > 0 ? (
-        <div className="bg-white border border-[#E4E6EB] rounded-xl p-12 text-center space-y-3">
-          <h3 className="text-xl font-semibold text-[#111317]">
-            Все загруженные камни ({fancyCount}) — цветные бриллианты
-          </h3>
-          <p className="text-sm text-[#5A606D] max-w-md mx-auto">
-            Для них выделен специализированный раздел с фильтрами по интенсивности
-            окраски (Faint–Vivid), тону, обертону и флуоресценции.
-          </p>
-          {onGoToFancy && (
+      {/* Results Grid (Paginated for 30,000-50,000 stone performance) */}
+      <div id="catalog-results-top" className="space-y-6">
+        {totalCount === 0 && fancyCount > 0 ? (
+          <div className="bg-white border border-[#E4E6EB] rounded-xl p-12 text-center space-y-3">
+            <h3 className="text-xl font-semibold text-[#111317]">
+              Все загруженные камни ({fancyCount.toLocaleString('ru-RU')}) — цветные бриллианты
+            </h3>
+            <p className="text-sm text-[#5A606D] max-w-md mx-auto">
+              Для них выделен специализированный раздел с фильтрами по интенсивности
+              окраски (Faint–Vivid), тону, обертону и флуоресценции.
+            </p>
+            {onGoToFancy && (
+              <button
+                type="button"
+                onClick={onGoToFancy}
+                className="inline-flex items-center gap-1.5 px-5 py-2.5 text-xs font-medium rounded-lg bg-[#1B365D] text-white hover:bg-[#142947] transition-colors"
+              >
+                Перейти в раздел «Цветные бриллианты» ({fancyCount.toLocaleString('ru-RU')})
+              </button>
+            )}
+          </div>
+        ) : diamonds.length === 0 ? (
+          <div className="bg-white border border-[#E4E6EB] rounded-xl p-12 text-center space-y-3">
+            <h3 className="text-xl font-semibold text-[#111317]">
+              По выбранным фильтрам камни не найдены
+            </h3>
+            <p className="text-sm text-[#5A606D]">
+              Попробуйте расширить диапазон цены или каратности, либо сбросьте фильтры.
+            </p>
             <button
               type="button"
-              onClick={onGoToFancy}
-              className="inline-flex items-center gap-1.5 px-5 py-2.5 text-xs font-medium rounded-lg bg-[#1B365D] text-white hover:bg-[#142947] transition-colors"
+              onClick={onResetFilters}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-[#1B365D] text-white hover:bg-[#142947] transition-colors"
             >
-              Перейти в раздел «Цветные бриллианты» ({fancyCount})
+              <RotateCcw className="w-3.5 h-3.5" />
+              Сбросить все фильтры
             </button>
-          )}
-        </div>
-      ) : diamonds.length === 0 ? (
-        <div className="bg-white border border-[#E4E6EB] rounded-xl p-12 text-center space-y-3">
-          <h3 className="text-xl font-semibold text-[#111317]">
-            По выбранным фильтрам камни не найдены
-          </h3>
-          <p className="text-sm text-[#5A606D]">
-            Попробуйте расширить диапазон цены или каратности, либо сбросьте фильтры.
-          </p>
-          <button
-            type="button"
-            onClick={onResetFilters}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-[#1B365D] text-white hover:bg-[#142947] transition-colors"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            Сбросить все фильтры
-          </button>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {diamonds.map((diamond) => (
-            <DiamondCard
-              key={diamond.id}
-              diamond={diamond}
-              isCompared={comparedIds.includes(diamond.id)}
-              isWatched={watchedDiamondIds.has(diamond.id)}
-              onInspect={onInspect}
-              onToggleCompare={onToggleCompare}
-              onFindPair={onFindPair}
-              onToggleWatch={onToggleWatch}
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {visibleDiamonds.map((diamond) => (
+                <DiamondCard
+                  key={diamond.id}
+                  diamond={diamond}
+                  isCompared={comparedSet.has(diamond.id)}
+                  isWatched={watchedDiamondIds.has(diamond.id)}
+                  onInspect={onInspect}
+                  onToggleCompare={onToggleCompare}
+                  onFindPair={onFindPair}
+                  onToggleWatch={onToggleWatch}
+                />
+              ))}
+            </div>
+
+            <PaginationBar
+              totalItems={diamonds.length}
+              page={safePage}
+              pageSize={pageSize}
+              pageSizeOptions={[24, 48, 96]}
+              onPageChange={handlePageChange}
+              onPageSizeChange={(nextSize) => {
+                setPageSize(nextSize);
+                setPage(1);
+              }}
+              itemLabel="камней"
             />
-          ))}
-        </div>
-      )}
+          </>
+        )}
+      </div>
     </section>
   );
 };

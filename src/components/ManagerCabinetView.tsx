@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import {
   Check,
   Edit3,
@@ -35,6 +35,7 @@ import {
   PricingMode,
 } from '../types/diamond';
 import { NumericInput } from './NumericInput';
+import { PaginationBar } from './PaginationBar';
 
 interface ManagerCabinetViewProps {
   catalog: Diamond[];
@@ -87,6 +88,9 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
 }) => {
   const [directoryFilter, setDirectoryFilter] = useState<'all' | 'white' | 'fancy'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearch = useDeferredValue(searchQuery);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [draftConfig, setDraftConfig] = useState<PricingConfig>(pricingConfig);
   const [feedbackBanner, setFeedbackBanner] = useState<string | null>(null);
   const [editorDraft, setEditorDraft] = useState<EditorDraft | null>(null);
@@ -111,10 +115,12 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
         d.stoneType.toLowerCase().includes('diamond')));
 
   const filteredCatalog = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return catalog.filter((d) => {
-      if (directoryFilter === 'fancy' && !isFancyStone(d)) return false;
-      if (directoryFilter === 'white' && isFancyStone(d)) return false;
+    const q = deferredSearch.trim().toLowerCase();
+    const res: Diamond[] = [];
+    for (let i = 0; i < catalog.length; i++) {
+      const d = catalog[i];
+      if (directoryFilter === 'fancy' && !isFancyStone(d)) continue;
+      if (directoryFilter === 'white' && isFancyStone(d)) continue;
       if (
         q &&
         !d.sku.toLowerCase().includes(q) &&
@@ -124,11 +130,23 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
         !SHAPE_SHORT_RU[d.shape].toLowerCase().includes(q) &&
         !d.origin.toLowerCase().includes(q)
       ) {
-        return false;
+        continue;
       }
-      return true;
-    });
-  }, [catalog, directoryFilter, searchQuery]);
+      res.push(d);
+    }
+    return res;
+  }, [catalog, directoryFilter, deferredSearch]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [filteredCatalog.length, directoryFilter, deferredSearch]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredCatalog.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const visibleRows = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return filteredCatalog.slice(start, start + pageSize);
+  }, [filteredCatalog, safePage, pageSize]);
 
   const summary = useMemo(() => {
     const currencyCounts = new Map<PriceCurrency, number>();
@@ -707,7 +725,7 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#E4E6EB]">
-                {filteredCatalog.map((d) => {
+                {visibleRows.map((d) => {
                   const costTotal = getEffectiveCostPrice(d);
                   const costPerCt = Math.round(costTotal / Math.max(0.01, d.carat));
                   const clientPerCt = Math.round(d.priceUsd / Math.max(0.01, d.carat));
@@ -871,6 +889,23 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
               </div>
             )}
           </div>
+
+          {filteredCatalog.length > 0 && (
+            <div className="px-4 pb-4">
+              <PaginationBar
+                totalItems={filteredCatalog.length}
+                page={safePage}
+                pageSize={pageSize}
+                pageSizeOptions={[50, 100, 250]}
+                onPageChange={setPage}
+                onPageSizeChange={(nextSize) => {
+                  setPageSize(nextSize);
+                  setPage(1);
+                }}
+                itemLabel="строк ассортимента"
+              />
+            </div>
+          )}
         </div>
       </section>
 

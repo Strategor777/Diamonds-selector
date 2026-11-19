@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useDeferredValue, useMemo, useState } from 'react';
 import {
   Check,
   ExternalLink,
@@ -48,6 +48,8 @@ export const PairFinderView: React.FC<PairFinderViewProps> = ({
   const [selectedAnchorId, setSelectedAnchorId] = useState<string>(
     initialAnchorId || catalog[0]?.id || ''
   );
+  const [anchorSearch, setAnchorSearch] = useState('');
+  const deferredAnchorSearch = useDeferredValue(anchorSearch);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
 
   // Custom anchor specification state
@@ -81,19 +83,50 @@ export const PairFinderView: React.FC<PairFinderViewProps> = ({
     [catalog, selectedAnchorId]
   );
 
+  // Cap dropdown options to 100 filtered stones so 50,000 stones never freeze the select element
+  const selectableAnchorOptions = useMemo(() => {
+    const q = deferredAnchorSearch.trim().toLowerCase();
+    const list: Diamond[] = [];
+    let includesCurrent = false;
+
+    for (let i = 0; i < catalog.length; i++) {
+      const d = catalog[i];
+      if (
+        !q ||
+        d.sku.toLowerCase().includes(q) ||
+        d.certNumber.toLowerCase().includes(q) ||
+        d.color.toLowerCase().includes(q) ||
+        SHAPE_SHORT_RU[d.shape].toLowerCase().includes(q)
+      ) {
+        list.push(d);
+        if (d.id === selectedAnchorId) includesCurrent = true;
+        if (list.length >= 100) break;
+      }
+    }
+
+    if (!includesCurrent && anchorCatalogStone) {
+      list.unshift(anchorCatalogStone);
+    }
+    return list;
+  }, [catalog, deferredAnchorSearch, selectedAnchorId, anchorCatalogStone]);
+
   const availableColorOptions = useMemo(() => {
     const set = new Set<string>(ALL_COLORS);
-    catalog.forEach((d) => {
-      if (d.color) set.add(d.color);
-    });
+    for (let i = 0; i < catalog.length; i++) {
+      const c = catalog[i].color;
+      if (c) set.add(c);
+      if (set.size >= 80) break;
+    }
     return Array.from(set);
   }, [catalog]);
 
   const availableClarityOptions = useMemo(() => {
     const set = new Set<string>(ALL_CLARITIES);
-    catalog.forEach((d) => {
-      if (d.clarity) set.add(d.clarity);
-    });
+    for (let i = 0; i < catalog.length; i++) {
+      const cl = catalog[i].clarity;
+      if (cl) set.add(cl);
+      if (set.size >= 30) break;
+    }
     return Array.from(set);
   }, [catalog]);
 
@@ -201,6 +234,16 @@ export const PairFinderView: React.FC<PairFinderViewProps> = ({
               >
                 Эталонный камень из каталога
               </label>
+              {catalog.length > 50 && (
+                <input
+                  type="text"
+                  value={anchorSearch}
+                  onChange={(e) => setAnchorSearch(e.target.value)}
+                  placeholder="Найти эталон по SKU, сертификату, форме..."
+                  aria-label="Поиск эталонного камня"
+                  className="w-full px-3 py-2 text-xs bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg text-[#111317] focus:outline-none focus:border-[#1B365D]"
+                />
+              )}
               <select
                 id="anchor-stone-select"
                 value={selectedAnchorId}
@@ -210,7 +253,7 @@ export const PairFinderView: React.FC<PairFinderViewProps> = ({
                 }}
                 className="w-full px-3 py-2.5 text-sm bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg text-[#111317] focus:outline-none focus:border-[#1B365D]"
               >
-                {catalog.map((d) => (
+                {selectableAnchorOptions.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.sku} · {SHAPE_SHORT_RU[d.shape]} {d.carat.toFixed(2)} ct · {d.color}/{d.clarity} ({d.lengthMm.toFixed(2)}×{d.widthMm.toFixed(2)} мм)
                   </option>

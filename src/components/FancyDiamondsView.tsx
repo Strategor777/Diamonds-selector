@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import {
   FileSpreadsheet,
   GitCompare,
@@ -23,6 +23,7 @@ import {
 import { DiamondCard } from './DiamondCard';
 import { DiamondShapeIcon } from './DiamondShapeIcon';
 import { NumericInput } from './NumericInput';
+import { PaginationBar } from './PaginationBar';
 
 interface FancyDiamondsViewProps {
   diamonds: Diamond[];
@@ -61,7 +62,12 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
   const [maxPrice, setMaxPrice] = useState<number>(200000);
   const [certLab, setCertLab] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const deferredSearch = useDeferredValue(searchQuery);
   const [sortBy, setSortBy] = useState<SortBy>('price-asc');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(24);
+
+  const comparedSet = useMemo(() => new Set(comparedIds), [comparedIds]);
 
   const facets = useMemo(() => {
     const colorFamilyCounts = new Map<string, number>();
@@ -142,31 +148,26 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
   }, [diamonds]);
 
   const filteredDiamonds = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = deferredSearch.trim().toLowerCase();
+    const famSet = selectedColorFamilies.length > 0 ? new Set(selectedColorFamilies) : null;
+    const intSet = selectedIntensities.length > 0 ? new Set(selectedIntensities) : null;
+    const shapeSet = selectedShapes.length > 0 ? new Set(selectedShapes) : null;
+    const claritySet = selectedClarities.length > 0 ? new Set(selectedClarities) : null;
+    const labUpper = certLab !== 'ALL' ? certLab.toUpperCase() : null;
 
-    const list = diamonds.filter((d) => {
-      const fam = d.colorFamily || 'Фантазийный';
-      if (selectedColorFamilies.length > 0 && !selectedColorFamilies.includes(fam)) {
-        return false;
-      }
-      const intensity = d.fancyIntensity || extractFancyIntensity(d.color);
-      if (selectedIntensities.length > 0 && !selectedIntensities.includes(intensity)) {
-        return false;
-      }
-      if (selectedShapes.length > 0 && !selectedShapes.includes(d.shape)) {
-        return false;
-      }
-      if (selectedClarities.length > 0 && !selectedClarities.includes(d.clarity)) {
-        return false;
-      }
-      if (d.carat < minCarat || d.carat > maxCarat) {
-        return false;
-      }
-      if (d.priceUsd < minPrice || d.priceUsd > maxPrice) {
-        return false;
-      }
-      if (certLab !== 'ALL' && d.certLab.toUpperCase() !== certLab.toUpperCase()) {
-        return false;
+    const list: Diamond[] = [];
+    for (let i = 0; i < diamonds.length; i++) {
+      const d = diamonds[i];
+      if (d.carat < minCarat || d.carat > maxCarat) continue;
+      if (d.priceUsd < minPrice || d.priceUsd > maxPrice) continue;
+      if (shapeSet && !shapeSet.has(d.shape)) continue;
+      if (claritySet && !claritySet.has(d.clarity)) continue;
+      if (labUpper && d.certLab.toUpperCase() !== labUpper) continue;
+
+      if (famSet && !famSet.has(d.colorFamily || 'Фантазийный')) continue;
+      if (intSet) {
+        const intensity = d.fancyIntensity || extractFancyIntensity(d.color);
+        if (!intSet.has(intensity)) continue;
       }
       if (
         q &&
@@ -179,12 +180,12 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
         !SHAPE_SHORT_RU[d.shape].toLowerCase().includes(q) &&
         !d.origin.toLowerCase().includes(q)
       ) {
-        return false;
+        continue;
       }
-      return true;
-    });
+      list.push(d);
+    }
 
-    return [...list].sort((a, b) => {
+    list.sort((a, b) => {
       switch (sortBy) {
         case 'price-asc':
           return a.priceUsd - b.priceUsd;
@@ -194,17 +195,12 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
           return b.carat - a.carat;
         case 'carat-asc':
           return a.carat - b.carat;
-        case 'drop-desc': {
-          const dropA = a.previousPriceUsd
-            ? (a.previousPriceUsd - a.priceUsd) / a.previousPriceUsd
-            : 0;
-          const dropB = b.previousPriceUsd
-            ? (b.previousPriceUsd - b.priceUsd) / b.previousPriceUsd
-            : 0;
-          return dropB - dropA;
-        }
+        case 'drop-desc':
+          return 0;
       }
     });
+
+    return list;
   }, [
     diamonds,
     selectedColorFamilies,
@@ -216,9 +212,29 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
     minPrice,
     maxPrice,
     certLab,
-    searchQuery,
+    deferredSearch,
     sortBy,
   ]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [
+    filteredDiamonds.length,
+    sortBy,
+    selectedColorFamilies,
+    selectedIntensities,
+    selectedShapes,
+    selectedClarities,
+    certLab,
+    deferredSearch,
+  ]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredDiamonds.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const visibleDiamonds = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return filteredDiamonds.slice(start, start + pageSize);
+  }, [filteredDiamonds, safePage, pageSize]);
 
   const toggleItem = <T,>(
     setter: React.Dispatch<React.SetStateAction<T[]>>,
@@ -684,19 +700,39 @@ export const FancyDiamondsView: React.FC<FancyDiamondsViewProps> = ({
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredDiamonds.map((diamond) => (
-              <DiamondCard
-                key={diamond.id}
-                diamond={diamond}
-                isCompared={comparedIds.includes(diamond.id)}
-                isWatched={watchedDiamondIds.has(diamond.id)}
-                onInspect={onInspect}
-                onToggleCompare={onToggleCompare}
-                onFindPair={onFindPair}
-                onToggleWatch={onToggleWatch}
-              />
-            ))}
+          <div id="fancy-results-top" className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {visibleDiamonds.map((diamond) => (
+                <DiamondCard
+                  key={diamond.id}
+                  diamond={diamond}
+                  isCompared={comparedSet.has(diamond.id)}
+                  isWatched={watchedDiamondIds.has(diamond.id)}
+                  onInspect={onInspect}
+                  onToggleCompare={onToggleCompare}
+                  onFindPair={onFindPair}
+                  onToggleWatch={onToggleWatch}
+                />
+              ))}
+            </div>
+
+            <PaginationBar
+              totalItems={filteredDiamonds.length}
+              page={safePage}
+              pageSize={pageSize}
+              pageSizeOptions={[24, 48, 96]}
+              onPageChange={(next) => {
+                setPage(next);
+                document
+                  .getElementById('fancy-results-top')
+                  ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }}
+              onPageSizeChange={(nextSize) => {
+                setPageSize(nextSize);
+                setPage(1);
+              }}
+              itemLabel="цветных бриллиантов"
+            />
           </div>
         )}
       </section>

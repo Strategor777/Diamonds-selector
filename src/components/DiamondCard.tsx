@@ -27,7 +27,7 @@ interface DiamondCardProps {
   onToggleWatch?: (diamond: Diamond) => void;
 }
 
-export const DiamondCard: React.FC<DiamondCardProps> = ({
+export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
   diamond,
   isCompared,
   onInspect,
@@ -58,6 +58,8 @@ export const DiamondCard: React.FC<DiamondCardProps> = ({
           <img
             src={diamond.imageUrl}
             alt={`${stoneTitlePrefix}${SHAPE_SHORT_RU[diamond.shape]} ${diamond.carat.toFixed(2)} ct ${diamond.color} ${diamond.clarity}`}
+            loading="lazy"
+            decoding="async"
             referrerPolicy="no-referrer"
             onError={() => setImgError(true)}
             onClick={() => onInspect(diamond, 'photo')}
@@ -258,4 +260,5 @@ export const DiamondCard: React.FC<DiamondCardProps> = ({
       </div>
     </article>
   );
-};
+});
+DiamondCard.displayName = 'DiamondCard';

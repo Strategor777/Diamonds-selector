@@ -1,32 +1,24 @@
-import React, { useMemo, useState } from 'react';
-import { User } from 'firebase/auth';
+import React, { Suspense, lazy, useDeferredValue, useMemo, useState } from 'react';
+import type { User } from 'firebase/auth';
 import {
   ArrowRight,
   Scale,
   X,
 } from 'lucide-react';
 import { CatalogSection } from './components/CatalogSection';
-import { CompareView } from './components/CompareView';
-import { DiamondDetailModal } from './components/DiamondDetailModal';
-import { ExcelImportModal } from './components/ExcelImportModal';
-import { FancyDiamondsView } from './components/FancyDiamondsView';
-import { GoogleSheetsWorkspace } from './components/GoogleSheetsWorkspace';
 import { GoogleSignInButton } from './components/GoogleSignInButton';
-import { ManagerCabinetView } from './components/ManagerCabinetView';
-import { PairFinderView } from './components/PairFinderView';
 import {
   ALL_INITIAL_DIAMONDS,
   DEFAULT_PRICING_CONFIG,
   HERO_IMAGE_URL,
-  SHAPE_SHORT_RU,
   applyPricingToDiamond,
 } from './data/diamonds';
 import {
-  getAccessToken,
-  googleSignIn,
-  initAuth,
-  logout,
-} from './lib/googleAuth';
+  buildCatalogIndex,
+  computeCatalogBounds,
+  deduplicateDiamonds,
+  filterAndSortCatalog,
+} from './lib/catalogEngine';
 import {
   AppSection,
   Diamond,
@@ -34,10 +26,56 @@ import {
   PricingConfig,
 } from './types/diamond';
 
+// Route & modal-level code splitting to keep initial bundle lean and fast
+const FancyDiamondsView = lazy(() =>
+  import('./components/FancyDiamondsView').then((m) => ({
+    default: m.FancyDiamondsView,
+  }))
+);
+const PairFinderView = lazy(() =>
+  import('./components/PairFinderView').then((m) => ({
+    default: m.PairFinderView,
+  }))
+);
+const CompareView = lazy(() =>
+  import('./components/CompareView').then((m) => ({
+    default: m.CompareView,
+  }))
+);
+const GoogleSheetsWorkspace = lazy(() =>
+  import('./components/GoogleSheetsWorkspace').then((m) => ({
+    default: m.GoogleSheetsWorkspace,
+  }))
+);
+const ManagerCabinetView = lazy(() =>
+  import('./components/ManagerCabinetView').then((m) => ({
+    default: m.ManagerCabinetView,
+  }))
+);
+const DiamondDetailModal = lazy(() =>
+  import('./components/DiamondDetailModal').then((m) => ({
+    default: m.DiamondDetailModal,
+  }))
+);
+const ExcelImportModal = lazy(() =>
+  import('./components/ExcelImportModal').then((m) => ({
+    default: m.ExcelImportModal,
+  }))
+);
+
+const SectionFallback = () => (
+  <div className="max-w-7xl mx-auto px-6 py-16">
+    <div className="bg-white border border-[#E4E6EB] rounded-xl p-10 text-center text-sm text-[#5A606D]">
+      Загрузка раздела...
+    </div>
+  </div>
+);
+
 const DEFAULT_FILTERS: DiamondFilters = {
   shapes: [],
   colors: [],
   colorFamilies: [],
+  fancyIntensities: [],
   stoneTypes: [],
   clarities: [],
   minCarat: 0.2,
@@ -85,25 +123,45 @@ export default function App() {
 
   const [heroImgError, setHeroImgError] = useState(false);
 
-  // Initialize Firebase Auth listener (in-memory token only)
+  // Lazily load Firebase Auth after initial paint so Firebase SDK is code-split
   React.useEffect(() => {
-    const unsubscribe = initAuth(
-      (signedInUser, token) => {
-        setUser(signedInUser);
-        setAccessToken(token);
-      },
-      () => {
-        setUser(null);
-        setAccessToken(null);
-      }
-    );
-    return () => unsubscribe();
+    let active = true;
+    let unsubscribe: (() => void) | undefined;
+
+    import('./lib/googleAuth')
+      .then((authMod) => {
+        if (!active) return;
+        unsubscribe = authMod.initAuth(
+          (signedInUser, token) => {
+            if (!active) return;
+            setUser(signedInUser);
+            setAccessToken(token);
+          },
+          () => {
+            if (!active) return;
+            setUser(null);
+            setAccessToken(null);
+          }
+        );
+        authMod.getAccessToken().then((t) => {
+          if (active && t) setAccessToken(t);
+        });
+      })
+      .catch(() => {
+        // Ignore auth chunk errors in offline/SSR contexts
+      });
+
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
   }, []);
 
   const handleGoogleLogin = async () => {
     setIsLoggingIn(true);
     try {
-      const result = await googleSignIn();
+      const authMod = await import('./lib/googleAuth');
+      const result = await authMod.googleSignIn();
       if (result) {
         setUser(result.user);
         setAccessToken(result.accessToken);
@@ -116,122 +174,41 @@ export default function App() {
   };
 
   const handleGoogleLogout = async () => {
-    await logout();
+    const authMod = await import('./lib/googleAuth');
+    await authMod.logout();
     setUser(null);
     setAccessToken(null);
   };
 
-  // Ensure useEffect is referenced when initializing auth
-  React.useEffect(() => {
-    getAccessToken().then((t) => {
-      if (t) setAccessToken(t);
-    });
-  }, []);
+  // Pre-indexed catalog & deferred search for smooth 30,000-50,000 stone performance
+  const deferredSearchQuery = useDeferredValue(filters.searchQuery);
+  const catalogIndex = useMemo(() => buildCatalogIndex(catalog), [catalog]);
 
-  const filteredCatalog = useMemo(() => {
-    const q = filters.searchQuery.trim().toLowerCase();
-
-    const list = catalog.filter((d) => {
-      if (filters.shapes.length > 0 && !filters.shapes.includes(d.shape)) {
-        return false;
-      }
-      if (
-        filters.stoneTypes.length > 0 &&
-        !filters.stoneTypes.includes(d.stoneType || 'Бриллиант')
-      ) {
-        return false;
-      }
-      if (
-        filters.colorFamilies.length > 0 &&
-        !filters.colorFamilies.includes(d.colorFamily || 'Бесцветный (D–J)')
-      ) {
-        return false;
-      }
-      if (filters.colors.length > 0 && !filters.colors.includes(d.color)) {
-        return false;
-      }
-      if (filters.clarities.length > 0 && !filters.clarities.includes(d.clarity)) {
-        return false;
-      }
-      if (d.carat < filters.minCarat || d.carat > filters.maxCarat) {
-        return false;
-      }
-      if (d.priceUsd < filters.minPrice || d.priceUsd > filters.maxPrice) {
-        return false;
-      }
-      if (
-        filters.certLab !== 'ALL' &&
-        d.certLab.toUpperCase() !== filters.certLab.toUpperCase()
-      ) {
-        return false;
-      }
-      if (
-        filters.onlyPriceDrops &&
-        (!d.previousPriceUsd || d.previousPriceUsd <= d.priceUsd)
-      ) {
-        return false;
-      }
-      if (
-        q &&
-        !d.sku.toLowerCase().includes(q) &&
-        !d.certNumber.toLowerCase().includes(q) &&
-        !SHAPE_SHORT_RU[d.shape].toLowerCase().includes(q) &&
-        !(d.stoneType || '').toLowerCase().includes(q) &&
-        !d.color.toLowerCase().includes(q) &&
-        !(d.colorFamily || '').toLowerCase().includes(q) &&
-        !d.origin.toLowerCase().includes(q)
-      ) {
-        return false;
-      }
-      return true;
-    });
-
-    return [...list].sort((a, b) => {
-      switch (filters.sortBy) {
-        case 'price-asc':
-          return a.priceUsd - b.priceUsd;
-        case 'price-desc':
-          return b.priceUsd - a.priceUsd;
-        case 'carat-desc':
-          return b.carat - a.carat;
-        case 'carat-asc':
-          return a.carat - b.carat;
-        case 'drop-desc': {
-          const dropA = a.previousPriceUsd
-            ? (a.previousPriceUsd - a.priceUsd) / a.previousPriceUsd
-            : 0;
-          const dropB = b.previousPriceUsd
-            ? (b.previousPriceUsd - b.priceUsd) / b.previousPriceUsd
-            : 0;
-          return dropB - dropA;
-        }
-      }
-    });
-  }, [catalog, filters]);
-
-  const fancyDiamonds = useMemo(
-    () =>
-      catalog.filter(
-        (d) =>
-          d.directory === 'fancy' ||
-          (Boolean(d.colorFamily) &&
-            d.colorFamily !== 'Бесцветный (D–J)' &&
-            (!d.stoneType ||
-              d.stoneType.toLowerCase().includes('бриллиант') ||
-              d.stoneType.toLowerCase().includes('diamond')))
-      ),
-    [catalog]
+  const filteredCatalog = useMemo(
+    () => filterAndSortCatalog(catalog, catalogIndex, filters, deferredSearchQuery),
+    [catalog, catalogIndex, filters, deferredSearchQuery]
   );
 
+  const fancyDiamonds = useMemo(() => {
+    const res: Diamond[] = [];
+    for (let i = 0; i < catalog.length; i++) {
+      if (catalogIndex.fancyFlags[i] === 1) {
+        res.push(catalog[i]);
+      }
+    }
+    return res;
+  }, [catalog, catalogIndex]);
+
   const inspectedDiamond = useMemo(
-    () => catalog.find((d) => d.id === inspectedDiamondId) || null,
+    () => (inspectedDiamondId ? catalog.find((d) => d.id === inspectedDiamondId) || null : null),
     [catalog, inspectedDiamondId]
   );
 
-  const comparedDiamonds = useMemo(
-    () => catalog.filter((d) => comparedIds.includes(d.id)),
-    [catalog, comparedIds]
-  );
+  const comparedDiamonds = useMemo(() => {
+    if (comparedIds.length === 0) return [];
+    const set = new Set(comparedIds);
+    return catalog.filter((d) => set.has(d.id));
+  }, [catalog, comparedIds]);
 
   const watchedDiamondIds = useMemo(() => new Set<string>(), []);
 
@@ -277,30 +254,8 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const computeBoundsForStones = (stones: Diamond[]) => {
-    if (stones.length === 0) {
-      return {
-        minCarat: DEFAULT_FILTERS.minCarat,
-        maxCarat: DEFAULT_FILTERS.maxCarat,
-        minPrice: DEFAULT_FILTERS.minPrice,
-        maxPrice: DEFAULT_FILTERS.maxPrice,
-      };
-    }
-    const minImpCarat = Math.min(...stones.map((d) => d.carat));
-    const maxImpCarat = Math.max(...stones.map((d) => d.carat));
-    const minImpPrice = Math.min(...stones.map((d) => d.priceUsd));
-    const maxImpPrice = Math.max(...stones.map((d) => d.priceUsd));
-
-    return {
-      minCarat: Math.max(0, Math.floor(minImpCarat * 20) / 20),
-      maxCarat: Math.max(1.0, Math.ceil(maxImpCarat * 20) / 20),
-      minPrice: Math.max(0, Math.floor(minImpPrice / 500) * 500),
-      maxPrice: Math.max(1000, Math.ceil(maxImpPrice / 1000) * 1000),
-    };
-  };
-
   const handleResetFilters = () => {
-    const bounds = computeBoundsForStones(catalog);
+    const bounds = computeCatalogBounds(catalog, DEFAULT_FILTERS);
     setFilters({
       ...DEFAULT_FILTERS,
       minCarat: Math.min(DEFAULT_FILTERS.minCarat, bounds.minCarat),
@@ -315,7 +270,7 @@ export default function App() {
     replaceExisting: boolean
   ) => {
     if (imported.length === 0) return;
-    const impBounds = computeBoundsForStones(imported);
+    const impBounds = computeCatalogBounds(imported, DEFAULT_FILTERS);
 
     if (replaceExisting) {
       setFilters({
@@ -341,9 +296,18 @@ export default function App() {
     replaceExisting: boolean
   ) => {
     expandFilterBoundsForDiamonds(imported, replaceExisting);
-    setCatalog((prev) => (replaceExisting ? imported : [...imported, ...prev]));
+    let uniqueCount = imported.length;
+    setCatalog((prev) => {
+      const dedup = deduplicateDiamonds(
+        imported,
+        prev,
+        replaceExisting ? 'all' : 'none'
+      );
+      uniqueCount = dedup.diamonds.length;
+      return dedup.diamonds;
+    });
     setImportBanner(
-      `Загружено ${imported.length} камней из Google Таблиц.`
+      `Загружено ${imported.length.toLocaleString('ru-RU')} строк из Google Таблиц (уникальных в базе: ${uniqueCount.toLocaleString('ru-RU')}).`
     );
     setActiveSection('catalog');
   };
@@ -360,22 +324,23 @@ export default function App() {
     targetDirectory: 'white' | 'fancy'
   ) => {
     expandFilterBoundsForDiamonds(imported, replaceExisting);
-    const isFancyStone = (d: Diamond) =>
-      d.directory === 'fancy' ||
-      (Boolean(d.colorFamily) &&
-        d.colorFamily !== 'Бесцветный (D–J)' &&
-        (!d.stoneType ||
-          d.stoneType.toLowerCase().includes('бриллиант') ||
-          d.stoneType.toLowerCase().includes('diamond')));
+
+    const replaceMode = !replaceExisting
+      ? 'none'
+      : targetDirectory === 'fancy'
+        ? 'fancy'
+        : 'all';
+
+    let stats = { addedCount: imported.length, updatedCount: 0, duplicatesInBatch: 0 };
 
     setCatalog((prev) => {
-      if (!replaceExisting) {
-        return [...imported, ...prev];
-      }
-      if (targetDirectory === 'fancy') {
-        return [...imported, ...prev.filter((d) => !isFancyStone(d))];
-      }
-      return imported;
+      const dedup = deduplicateDiamonds(imported, prev, replaceMode);
+      stats = {
+        addedCount: dedup.addedCount,
+        updatedCount: dedup.updatedCount,
+        duplicatesInBatch: dedup.duplicatesInBatch,
+      };
+      return dedup.diamonds;
     });
 
     if (replaceExisting && imported.length > 0 && targetDirectory === 'white') {
@@ -385,8 +350,12 @@ export default function App() {
 
     const dirLabel =
       targetDirectory === 'fancy' ? 'директорию «Цветные бриллианты»' : 'каталог';
+    const dupSuffix =
+      stats.duplicatesInBatch > 0
+        ? ` · объединено дублей: ${stats.duplicatesInBatch.toLocaleString('ru-RU')}`
+        : '';
     setImportBanner(
-      `${replaceExisting ? 'Обновлена база' : 'Добавлено'} ${imported.length} камней в ${dirLabel} из файла «${fileName}».`
+      `${replaceExisting ? 'Обновлена база' : 'Загружено'} ${imported.length.toLocaleString('ru-RU')} строк в ${dirLabel} из «${fileName}» (новых: ${stats.addedCount.toLocaleString('ru-RU')}, обновлено: ${stats.updatedCount.toLocaleString('ru-RU')}${dupSuffix}).`
     );
     setActiveSection(targetDirectory === 'fancy' ? 'fancy' : 'catalog');
   };
@@ -681,6 +650,8 @@ export default function App() {
               diamonds={filteredCatalog}
               catalog={catalog}
               totalCount={catalog.length}
+              fancyCount={catalogIndex.fancyCount}
+              onGoToFancy={() => setActiveSection('fancy')}
               filters={filters}
               onChangeFilters={setFilters}
               onResetFilters={handleResetFilters}
@@ -695,98 +666,100 @@ export default function App() {
           </>
         )}
 
-        {activeSection === 'fancy' && (
-          <>
-            {importBanner && (
-              <div className="max-w-7xl mx-auto px-6 pt-6">
-                <div className="p-3.5 rounded-lg bg-[#ECFDF5] border border-[#A7F3D0] text-xs text-[#065F46] flex items-center justify-between gap-3">
-                  <span>{importBanner}</span>
-                  <button
-                    type="button"
-                    onClick={() => setImportBanner(null)}
-                    aria-label="Скрыть уведомление"
-                    className="text-[#065F46] hover:text-[#043927]"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
+        <Suspense fallback={<SectionFallback />}>
+          {activeSection === 'fancy' && (
+            <>
+              {importBanner && (
+                <div className="max-w-7xl mx-auto px-6 pt-6">
+                  <div className="p-3.5 rounded-lg bg-[#ECFDF5] border border-[#A7F3D0] text-xs text-[#065F46] flex items-center justify-between gap-3">
+                    <span>{importBanner}</span>
+                    <button
+                      type="button"
+                      onClick={() => setImportBanner(null)}
+                      aria-label="Скрыть уведомление"
+                      className="text-[#065F46] hover:text-[#043927]"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            )}
-            <FancyDiamondsView
-              diamonds={fancyDiamonds}
+              )}
+              <FancyDiamondsView
+                diamonds={fancyDiamonds}
+                comparedIds={comparedIds}
+                watchedDiamondIds={watchedDiamondIds}
+                onInspect={handleInspect}
+                onToggleCompare={handleToggleCompare}
+                onFindPair={handleFindPair}
+                onToggleWatch={handleToggleWatchDiamond}
+                onOpenExcelImport={() => handleOpenExcelImport('fancy')}
+                onGoToPairFinder={() => {
+                  const firstFancy = fancyDiamonds[0];
+                  if (firstFancy) setPairAnchorId(firstFancy.id);
+                  setActiveSection('pair-finder');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                onExportSheets={handleExportToSheets}
+              />
+            </>
+          )}
+
+          {activeSection === 'pair-finder' && (
+            <PairFinderView
+              catalog={catalog}
+              initialAnchorId={pairAnchorId}
               comparedIds={comparedIds}
-              watchedDiamondIds={watchedDiamondIds}
               onInspect={handleInspect}
-              onToggleCompare={handleToggleCompare}
-              onFindPair={handleFindPair}
-              onToggleWatch={handleToggleWatchDiamond}
-              onOpenExcelImport={() => handleOpenExcelImport('fancy')}
-              onGoToPairFinder={() => {
-                const firstFancy = fancyDiamonds[0];
-                if (firstFancy) setPairAnchorId(firstFancy.id);
-                setActiveSection('pair-finder');
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
-              onExportSheets={handleExportToSheets}
+              onComparePair={handleComparePair}
+              onExportPairToSheets={handleExportToSheets}
             />
-          </>
-        )}
+          )}
 
-        {activeSection === 'pair-finder' && (
-          <PairFinderView
-            catalog={catalog}
-            initialAnchorId={pairAnchorId}
-            comparedIds={comparedIds}
-            onInspect={handleInspect}
-            onComparePair={handleComparePair}
-            onExportPairToSheets={handleExportToSheets}
-          />
-        )}
+          {activeSection === 'compare' && (
+            <CompareView
+              diamonds={comparedDiamonds}
+              onRemove={(id) =>
+                setComparedIds((prev) => prev.filter((item) => item !== id))
+              }
+              onClearAll={() => setComparedIds([])}
+              onInspect={handleInspect}
+              onFindPair={handleFindPair}
+              onExportSheets={handleExportToSheets}
+              onGoToCatalog={() => setActiveSection('catalog')}
+            />
+          )}
 
-        {activeSection === 'compare' && (
-          <CompareView
-            diamonds={comparedDiamonds}
-            onRemove={(id) =>
-              setComparedIds((prev) => prev.filter((item) => item !== id))
-            }
-            onClearAll={() => setComparedIds([])}
-            onInspect={handleInspect}
-            onFindPair={handleFindPair}
-            onExportSheets={handleExportToSheets}
-            onGoToCatalog={() => setActiveSection('catalog')}
-          />
-        )}
+          {activeSection === 'sheets' && (
+            <GoogleSheetsWorkspace
+              user={user}
+              accessToken={accessToken}
+              isLoggingIn={isLoggingIn}
+              onLogin={handleGoogleLogin}
+              onLogout={handleGoogleLogout}
+              catalog={catalog}
+              comparedDiamonds={comparedDiamonds}
+              notifications={[]}
+              pricingConfig={pricingConfig}
+              customExportBatch={customExportBatch}
+              onClearCustomBatch={() => setCustomExportBatch(null)}
+              onImportDiamonds={handleImportFromSheets}
+            />
+          )}
 
-        {activeSection === 'sheets' && (
-          <GoogleSheetsWorkspace
-            user={user}
-            accessToken={accessToken}
-            isLoggingIn={isLoggingIn}
-            onLogin={handleGoogleLogin}
-            onLogout={handleGoogleLogout}
-            catalog={catalog}
-            comparedDiamonds={comparedDiamonds}
-            notifications={[]}
-            pricingConfig={pricingConfig}
-            customExportBatch={customExportBatch}
-            onClearCustomBatch={() => setCustomExportBatch(null)}
-            onImportDiamonds={handleImportFromSheets}
-          />
-        )}
-
-        {activeSection === 'manager' && (
-          <ManagerCabinetView
-            catalog={catalog}
-            pricingConfig={pricingConfig}
-            managerEmail={user?.email ?? null}
-            onUpdatePricingConfig={setPricingConfig}
-            onApplyPricingToStones={handleApplyPricingToStones}
-            onUpdateDiamond={handleUpdateDiamond}
-            onAddDiamond={handleAddDiamond}
-            onDeleteDiamond={handleDeleteDiamond}
-            onOpenExcelImport={() => handleOpenExcelImport('white')}
-          />
-        )}
+          {activeSection === 'manager' && (
+            <ManagerCabinetView
+              catalog={catalog}
+              pricingConfig={pricingConfig}
+              managerEmail={user?.email ?? null}
+              onUpdatePricingConfig={setPricingConfig}
+              onApplyPricingToStones={handleApplyPricingToStones}
+              onUpdateDiamond={handleUpdateDiamond}
+              onAddDiamond={handleAddDiamond}
+              onDeleteDiamond={handleDeleteDiamond}
+              onOpenExcelImport={() => handleOpenExcelImport('white')}
+            />
+          )}
+        </Suspense>
       </main>
 
       {/* Compact Comparison Tray on Catalog & Fancy Views */}
@@ -870,26 +843,32 @@ export default function App() {
         </div>
       </footer>
 
-      {/* Diamond Detail Modal (Photo + 10x Loupe + 360 Video + Certificate) */}
-      <DiamondDetailModal
-        diamond={inspectedDiamond}
-        initialTab={inspectorTab}
-        isCompared={
-          inspectedDiamond ? comparedIds.includes(inspectedDiamond.id) : false
-        }
-        onClose={() => setInspectedDiamondId(null)}
-        onToggleCompare={handleToggleCompare}
-        onFindPair={handleFindPair}
-      />
+      {/* Lazy-mounted Diamond Detail Modal (only loaded when a stone is inspected) */}
+      {inspectedDiamond && (
+        <Suspense fallback={null}>
+          <DiamondDetailModal
+            diamond={inspectedDiamond}
+            initialTab={inspectorTab}
+            isCompared={comparedIds.includes(inspectedDiamond.id)}
+            onClose={() => setInspectedDiamondId(null)}
+            onToggleCompare={handleToggleCompare}
+            onFindPair={handleFindPair}
+          />
+        </Suspense>
+      )}
 
-      {/* Excel (.xlsx/.xls/.csv) Import Modal */}
-      <ExcelImportModal
-        open={isExcelModalOpen}
-        defaultTargetDirectory={excelTargetDirectory}
-        pricingConfig={pricingConfig}
-        onClose={() => setIsExcelModalOpen(false)}
-        onImport={handleImportFromExcel}
-      />
+      {/* Lazy-mounted Excel Import Modal (keeps xlsx & worker out of initial bundle) */}
+      {isExcelModalOpen && (
+        <Suspense fallback={null}>
+          <ExcelImportModal
+            open={isExcelModalOpen}
+            defaultTargetDirectory={excelTargetDirectory}
+            pricingConfig={pricingConfig}
+            onClose={() => setIsExcelModalOpen(false)}
+            onImport={handleImportFromExcel}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

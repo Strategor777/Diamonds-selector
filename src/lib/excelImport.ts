@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import type * as XLSXType from 'xlsx';
 
 export interface ParsedExcelSheet {
   name: string;
@@ -10,71 +10,110 @@ export interface ParsedExcelWorkbook {
   sheets: ParsedExcelSheet[];
 }
 
-export async function parseExcelFile(file: File): Promise<ParsedExcelWorkbook> {
-  const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: 'array' });
+export function extractSheetRowsFast(
+  XLSX: typeof XLSXType,
+  worksheet: XLSXType.WorkSheet
+): string[][] {
+  const ref = worksheet['!ref'];
+  if (!ref) return [];
 
-  const sheets: ParsedExcelSheet[] = workbook.SheetNames.map((name) => {
-    const worksheet = workbook.Sheets[name];
-    const ref = worksheet['!ref'];
-    if (!ref) {
-      return { name, rows: [] };
-    }
+  const range = XLSX.utils.decode_range(ref);
+  const rawMatrix = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
+    header: 1,
+    raw: false,
+    defval: '',
+    blankrows: true,
+  });
 
-    const range = XLSX.utils.decode_range(ref);
-    const rows: string[][] = [];
-
-    for (let r = range.s.r; r <= range.e.r; r++) {
-      const rowValues: string[] = [];
-      for (let c = range.s.c; c <= range.e.c; c++) {
-        const addr = XLSX.utils.encode_cell({ r, c });
-        const cell = worksheet[addr] as XLSX.CellObject | undefined;
-        let val = '';
-
-        if (cell) {
-          // If cell has an embedded hyperlink (common in diamond lists for Video/Cert links)
-          // and display text is just a label like "Video" or "GIA", prefer the hyperlink URL
-          const linkTarget = cell.l?.Target ? String(cell.l.Target).trim() : '';
-          const formatted =
-            cell.w !== undefined && cell.w !== null
-              ? String(cell.w).trim()
-              : cell.v !== undefined && cell.v !== null
-                ? String(cell.v).trim()
-                : '';
-
-          if (
-            linkTarget &&
-            (linkTarget.startsWith('http://') || linkTarget.startsWith('https://')) &&
-            !formatted.startsWith('http')
-          ) {
-            val = linkTarget;
-          } else {
-            val = formatted;
+  // Fast sparse pass ONLY over worksheet keys to preserve embedded cell hyperlinks
+  // (avoids calling encode_cell 1,000,000+ times on 50,000-row spreadsheets)
+  const keys = Object.keys(worksheet);
+  for (let k = 0; k < keys.length; k++) {
+    const addr = keys[k];
+    if (addr.charCodeAt(0) === 33) continue; // skip '!ref', '!merges', etc.
+    const cell = worksheet[addr] as XLSXType.CellObject | undefined;
+    const linkTarget = cell?.l?.Target ? String(cell.l.Target).trim() : '';
+    if (
+      linkTarget &&
+      (linkTarget.startsWith('http://') || linkTarget.startsWith('https://'))
+    ) {
+      const decoded = XLSX.utils.decode_cell(addr);
+      const rIdx = decoded.r - range.s.r;
+      const cIdx = decoded.c - range.s.c;
+      if (rIdx >= 0 && rIdx < rawMatrix.length && cIdx >= 0) {
+        const row = rawMatrix[rIdx];
+        if (row) {
+          const currentVal = String(row[cIdx] ?? '').trim();
+          if (!currentVal.startsWith('http')) {
+            row[cIdx] = linkTarget;
           }
         }
-
-        rowValues.push(val);
-      }
-
-      if (rowValues.some((cell) => cell !== '')) {
-        rows.push(rowValues);
       }
     }
+  }
 
-    return { name, rows };
-  }).filter((s) => s.rows.length > 0);
+  const rows: string[][] = [];
+  for (let r = 0; r < rawMatrix.length; r++) {
+    const rawRow = rawMatrix[r];
+    if (!rawRow || rawRow.length === 0) continue;
+    let hasContent = false;
+    const cleaned = new Array<string>(rawRow.length);
+    for (let c = 0; c < rawRow.length; c++) {
+      const val = rawRow[c] !== undefined && rawRow[c] !== null
+        ? String(rawRow[c]).trim()
+        : '';
+      if (val !== '') hasContent = true;
+      cleaned[c] = val;
+    }
+    if (hasContent) {
+      rows.push(cleaned);
+    }
+  }
+
+  return rows;
+}
+
+export async function parseExcelBuffer(
+  buffer: ArrayBuffer,
+  fileName: string
+): Promise<ParsedExcelWorkbook> {
+  const XLSX = await import('xlsx');
+  const workbook = XLSX.read(buffer, {
+    type: 'array',
+    dense: false,
+    cellFormula: false,
+    cellHTML: false,
+    cellStyles: false,
+  });
+
+  const sheets: ParsedExcelSheet[] = [];
+  for (let i = 0; i < workbook.SheetNames.length; i++) {
+    const name = workbook.SheetNames[i];
+    const worksheet = workbook.Sheets[name];
+    if (!worksheet) continue;
+    const rows = extractSheetRowsFast(XLSX, worksheet);
+    if (rows.length > 0) {
+      sheets.push({ name, rows });
+    }
+  }
 
   if (sheets.length === 0) {
     throw new Error('В выбранном файле не найдено заполненных листов.');
   }
 
   return {
-    fileName: file.name,
+    fileName,
     sheets,
   };
 }
 
-export function downloadSampleXlsx(): void {
+export async function parseExcelFile(file: File): Promise<ParsedExcelWorkbook> {
+  const buffer = await file.arrayBuffer();
+  return parseExcelBuffer(buffer, file.name);
+}
+
+export async function downloadSampleXlsx(): Promise<void> {
+  const XLSX = await import('xlsx');
   const rows = [
     [
       'SKU',

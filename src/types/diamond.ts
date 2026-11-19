@@ -86,6 +86,7 @@ export interface DiamondFilters {
   shapes: DiamondShape[];
   colors: DiamondColor[];
   colorFamilies: string[];
+  fancyIntensities: string[];
   stoneTypes: string[];
   clarities: DiamondClarity[];
   minCarat: number;
