@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -13,8 +13,15 @@ import {
   ColumnAnalysisMeta,
   ColumnMapping,
   MAPPING_FIELDS,
+  analyzeColumns,
+  detectHeaderRowIndex,
+  mapRowsToDiamonds,
 } from '../lib/diamondMapper';
-import { downloadSampleXlsx } from '../lib/excelImport';
+import {
+  ParsedExcelWorkbook,
+  downloadSampleXlsx,
+  parseExcelBuffer,
+} from '../lib/excelImport';
 import { Diamond, PricingConfig } from '../types/diamond';
 import type {
   SheetSummary,
@@ -42,8 +49,11 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   onClose,
   onImport,
 }) => {
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputId = useId();
   const workerRef = useRef<Worker | null>(null);
+  const workerHealthyRef = useRef<boolean>(false);
+  const pendingFileRef = useRef<File | null>(null);
+  const fallbackWorkbookRef = useRef<ParsedExcelWorkbook | null>(null);
 
   const [isDragging, setIsDragging] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
@@ -72,7 +82,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     defaultTargetDirectory
   );
 
-  // Refs to read latest values inside worker callback cleanly
+  // Refs to read latest values inside worker callbacks cleanly
   const latestImportParamsRef = useRef({
     replaceCatalog,
     fileName,
@@ -103,20 +113,65 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     return () => window.removeEventListener('keydown', handleKey);
   }, [open, onClose, isMappingAll]);
 
-  // Spin up dedicated Web Worker only while modal is open
+  // Main-thread fallback parser (used automatically if Web Worker is blocked or fails)
+  const parseOnMainThread = async (file: File) => {
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = await parseExcelBuffer(buffer, file.name);
+      fallbackWorkbookRef.current = workbook;
+      const sheet = workbook.sheets[0];
+      const detectedHeader = detectHeaderRowIndex(sheet.rows);
+      const detectedAnalysis = analyzeColumns(sheet.rows, detectedHeader);
+      const detectedHeaders = sheet.rows[detectedHeader] || [];
+
+      setFileName(workbook.fileName);
+      setSheets(workbook.sheets.map((s) => ({ name: s.name, rowCount: s.rows.length })));
+      setSelectedSheetIndex(0);
+      setHeaderRowIndex(detectedHeader);
+      setHeaders(detectedHeaders);
+      setAnalysis(detectedAnalysis);
+      setMapping(detectedAnalysis.mapping);
+      setTotalDataRows(Math.max(0, sheet.rows.length - detectedHeader - 1));
+      setShowColumnMapper(
+        detectedAnalysis.mapping.carat < 0 || detectedAnalysis.mapping.shape < 0
+      );
+      setIsParsing(false);
+    } catch (err: any) {
+      setIsParsing(false);
+      setErrorMsg(
+        err?.message ||
+          'Не удалось прочитать файл. Убедитесь, что это корректный документ .xlsx, .xls или .csv.'
+      );
+    }
+  };
+
+  // Spin up dedicated Web Worker only while modal is open (with seamless fallback)
   useEffect(() => {
     if (!open) return;
-    if (typeof Worker === 'undefined') return;
+    if (typeof Worker === 'undefined') {
+      workerHealthyRef.current = false;
+      return;
+    }
 
-    const worker = new Worker(
-      new URL('../workers/excelImport.worker.ts', import.meta.url),
-      { type: 'module' }
-    );
-    workerRef.current = worker;
+    let worker: Worker | null = null;
+    try {
+      worker = new Worker(
+        new URL('../workers/excelImport.worker.ts', import.meta.url),
+        { type: 'module' }
+      );
+      workerRef.current = worker;
+      workerHealthyRef.current = true;
+    } catch {
+      workerRef.current = null;
+      workerHealthyRef.current = false;
+      return;
+    }
 
     worker.onmessage = (event: MessageEvent<WorkerOutboundMessage>) => {
       const msg = event.data;
       if (msg.type === 'parsed') {
+        pendingFileRef.current = null;
+        fallbackWorkbookRef.current = null;
         setFileName(msg.fileName);
         setSheets(msg.sheets);
         setSelectedSheetIndex(msg.sheetIndex);
@@ -126,11 +181,9 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
         setMapping(msg.analysis.mapping);
         setTotalDataRows(msg.totalDataRows);
         setIsParsing(false);
-        if (msg.analysis.mapping.carat < 0 || msg.analysis.mapping.shape < 0) {
-          setShowColumnMapper(true);
-        } else {
-          setShowColumnMapper(false);
-        }
+        setShowColumnMapper(
+          msg.analysis.mapping.carat < 0 || msg.analysis.mapping.shape < 0
+        );
       } else if (msg.type === 'analyzed') {
         setSelectedSheetIndex(msg.sheetIndex);
         setHeaderRowIndex(msg.headerRowIndex);
@@ -167,6 +220,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
           setErrorMsg('Не найдено валидных строк с весом в каратах для импорта.');
         }
       } else if (msg.type === 'error') {
+        pendingFileRef.current = null;
         setIsParsing(false);
         setIsMappingAll(false);
         setMapProgress(null);
@@ -175,34 +229,79 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     };
 
     worker.onerror = () => {
-      setIsParsing(false);
-      setIsMappingAll(false);
-      setMapProgress(null);
-      setErrorMsg('Ошибка фонового обработчика Excel. Попробуйте снова.');
+      // Automatically switch to main-thread chunked mode without failing the user
+      workerHealthyRef.current = false;
+      workerRef.current = null;
+      worker?.terminate();
+      const pending = pendingFileRef.current;
+      if (pending) {
+        pendingFileRef.current = null;
+        void parseOnMainThread(pending);
+      } else {
+        setIsParsing(false);
+        setIsMappingAll(false);
+        setMapProgress(null);
+      }
     };
 
     return () => {
-      worker.terminate();
+      worker?.terminate();
       workerRef.current = null;
+      workerHealthyRef.current = false;
     };
   }, [open]);
 
-  // Request instant lightweight preview (first 120 rows) whenever mapping/pricing/directory changes
+  // Compute instant lightweight preview (first 120 rows) via worker or main-thread fallback
   useEffect(() => {
-    if (!workerRef.current || !fileName || !mapping) return;
-    const msg: WorkerInboundMessage = {
-      type: 'preview',
-      sheetIndex: selectedSheetIndex,
-      headerRowIndex,
-      mapping,
-      options: {
-        defaultDirectory: targetDirectory,
-        defaultStoneType:
-          targetDirectory === 'fancy' ? 'Цветной бриллиант' : undefined,
-        pricingConfig,
-      },
+    if (!fileName || !mapping) return;
+    const mapOptions = {
+      defaultDirectory: targetDirectory,
+      defaultStoneType:
+        targetDirectory === 'fancy' ? 'Цветной бриллиант' : undefined,
+      pricingConfig,
     };
-    workerRef.current.postMessage(msg);
+
+    if (workerRef.current && workerHealthyRef.current && !fallbackWorkbookRef.current) {
+      const msg: WorkerInboundMessage = {
+        type: 'preview',
+        sheetIndex: selectedSheetIndex,
+        headerRowIndex,
+        mapping,
+        options: mapOptions,
+      };
+      workerRef.current.postMessage(msg);
+      return;
+    }
+
+    const wb = fallbackWorkbookRef.current;
+    if (!wb) return;
+    const sheet = wb.sheets[selectedSheetIndex] || wb.sheets[0];
+    if (!sheet) return;
+    const dataCount = Math.max(0, sheet.rows.length - headerRowIndex - 1);
+    const sampleEnd = Math.min(sheet.rows.length, headerRowIndex + 1 + 120);
+    const sampleRows = sheet.rows.slice(0, sampleEnd);
+    const sampleResult = mapRowsToDiamonds(
+      sampleRows,
+      mapping,
+      'xlsx',
+      headerRowIndex,
+      mapOptions
+    );
+    const sampledCount = Math.max(1, sampleEnd - headerRowIndex - 1);
+    const validRatio = sampleResult.diamonds.length / sampledCount;
+    const estValid =
+      dataCount <= 120
+        ? sampleResult.diamonds.length
+        : Math.round(dataCount * validRatio);
+    const estSkipped =
+      dataCount <= 120
+        ? sampleResult.skippedRows
+        : Math.max(0, dataCount - estValid);
+
+    setPreviewDiamonds(sampleResult.diamonds.slice(0, 15));
+    setEstimatedValidCount(estValid);
+    setEstimatedSkippedCount(estSkipped);
+    setTotalDataRows(dataCount);
   }, [fileName, selectedSheetIndex, headerRowIndex, mapping, targetDirectory, pricingConfig]);
 
   const detectedSectionSummary = useMemo(() => {
@@ -222,83 +321,161 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     setErrorMsg(null);
     setIsParsing(true);
     setPreviewDiamonds([]);
-    try {
-      const buffer = await file.arrayBuffer();
-      if (workerRef.current) {
+    fallbackWorkbookRef.current = null;
+
+    if (workerRef.current && workerHealthyRef.current) {
+      pendingFileRef.current = file;
+      try {
+        const buffer = await file.arrayBuffer();
         const msg: WorkerInboundMessage = {
           type: 'parse',
           buffer,
           fileName: file.name,
         };
         workerRef.current.postMessage(msg, [buffer]);
-      } else {
-        throw new Error('Фоновый обработчик недоступен в текущей среде.');
+        return;
+      } catch {
+        pendingFileRef.current = null;
+        workerHealthyRef.current = false;
       }
-    } catch (err: any) {
-      setErrorMsg(
-        err?.message ||
-          'Не удалось прочитать файл. Убедитесь, что это корректный документ .xlsx, .xls или .csv.'
-      );
-      setIsParsing(false);
     }
+
+    await parseOnMainThread(file);
   };
 
   const handleSheetChange = (nextIdx: number) => {
     setSelectedSheetIndex(nextIdx);
-    if (!workerRef.current) return;
-    const msg: WorkerInboundMessage = {
-      type: 'analyze',
-      sheetIndex: nextIdx,
-    };
-    workerRef.current.postMessage(msg);
+    if (workerRef.current && workerHealthyRef.current && !fallbackWorkbookRef.current) {
+      const msg: WorkerInboundMessage = {
+        type: 'analyze',
+        sheetIndex: nextIdx,
+      };
+      workerRef.current.postMessage(msg);
+      return;
+    }
+    const wb = fallbackWorkbookRef.current;
+    if (!wb) return;
+    const sheet = wb.sheets[nextIdx] || wb.sheets[0];
+    if (!sheet) return;
+    const detectedHeader = detectHeaderRowIndex(sheet.rows);
+    const detectedAnalysis = analyzeColumns(sheet.rows, detectedHeader);
+    setHeaderRowIndex(detectedHeader);
+    setHeaders(sheet.rows[detectedHeader] || []);
+    setAnalysis(detectedAnalysis);
+    setMapping(detectedAnalysis.mapping);
+    setTotalDataRows(Math.max(0, sheet.rows.length - detectedHeader - 1));
   };
 
   const handleHeaderRowChange = (nextRow: number) => {
     setHeaderRowIndex(nextRow);
-    if (!workerRef.current) return;
-    const msg: WorkerInboundMessage = {
-      type: 'analyze',
-      sheetIndex: selectedSheetIndex,
-      headerRowIndex: nextRow,
-    };
-    workerRef.current.postMessage(msg);
+    if (workerRef.current && workerHealthyRef.current && !fallbackWorkbookRef.current) {
+      const msg: WorkerInboundMessage = {
+        type: 'analyze',
+        sheetIndex: selectedSheetIndex,
+        headerRowIndex: nextRow,
+      };
+      workerRef.current.postMessage(msg);
+      return;
+    }
+    const wb = fallbackWorkbookRef.current;
+    if (!wb) return;
+    const sheet = wb.sheets[selectedSheetIndex] || wb.sheets[0];
+    if (!sheet) return;
+    const detectedAnalysis = analyzeColumns(sheet.rows, nextRow);
+    setHeaders(sheet.rows[nextRow] || []);
+    setAnalysis(detectedAnalysis);
+    setMapping(detectedAnalysis.mapping);
+    setTotalDataRows(Math.max(0, sheet.rows.length - nextRow - 1));
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      handleFile(file);
+      void handleFile(file);
     }
     e.target.value = '';
   };
 
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDrop = (e: React.DragEvent<HTMLLabelElement>) => {
     e.preventDefault();
     setIsDragging(false);
     const file = e.dataTransfer.files?.[0];
     if (file) {
-      handleFile(file);
+      void handleFile(file);
     }
   };
 
-  const handleConfirmImport = () => {
-    if (!workerRef.current || !mapping || !fileName || estimatedValidCount === 0) return;
+  const handleConfirmImport = async () => {
+    if (!mapping || !fileName || estimatedValidCount === 0) return;
     setErrorMsg(null);
     setIsMappingAll(true);
     setMapProgress({ processed: 0, total: totalDataRows });
-    const msg: WorkerInboundMessage = {
-      type: 'mapAll',
-      sheetIndex: selectedSheetIndex,
-      headerRowIndex,
-      mapping,
-      options: {
-        defaultDirectory: targetDirectory,
-        defaultStoneType:
-          targetDirectory === 'fancy' ? 'Цветной бриллиант' : undefined,
-        pricingConfig,
-      },
+
+    const mapOptions = {
+      defaultDirectory: targetDirectory,
+      defaultStoneType:
+        targetDirectory === 'fancy' ? 'Цветной бриллиант' : undefined,
+      pricingConfig,
     };
-    workerRef.current.postMessage(msg);
+
+    if (workerRef.current && workerHealthyRef.current && !fallbackWorkbookRef.current) {
+      const msg: WorkerInboundMessage = {
+        type: 'mapAll',
+        sheetIndex: selectedSheetIndex,
+        headerRowIndex,
+        mapping,
+        options: mapOptions,
+      };
+      workerRef.current.postMessage(msg);
+      return;
+    }
+
+    // Chunked async main-thread fallback (yields between batches so UI stays responsive)
+    const wb = fallbackWorkbookRef.current;
+    if (!wb) {
+      setIsMappingAll(false);
+      setErrorMsg('Файл не загружен. Выберите файл заново.');
+      return;
+    }
+    const sheet = wb.sheets[selectedSheetIndex] || wb.sheets[0];
+    if (!sheet) {
+      setIsMappingAll(false);
+      return;
+    }
+
+    const headerRow = sheet.rows[headerRowIndex] || [];
+    const CHUNK_SIZE = 2500;
+    const allDiamonds: Diamond[] = [];
+
+    for (let start = headerRowIndex + 1; start < sheet.rows.length; start += CHUNK_SIZE) {
+      const end = Math.min(sheet.rows.length, start + CHUNK_SIZE);
+      const chunkRows = [headerRow, ...sheet.rows.slice(start, end)];
+      const chunkRes = mapRowsToDiamonds(chunkRows, mapping, 'xlsx', 0, mapOptions);
+      for (let j = 0; j < chunkRes.diamonds.length; j++) {
+        const item = chunkRes.diamonds[j];
+        item.id = `xlsx-${start + j}-${item.sku}`;
+        allDiamonds.push(item);
+      }
+      setMapProgress({
+        processed: Math.min(totalDataRows, end - headerRowIndex - 1),
+        total: totalDataRows,
+      });
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    }
+
+    setIsMappingAll(false);
+    setMapProgress(null);
+
+    if (allDiamonds.length > 0) {
+      onImport(allDiamonds, replaceCatalog, fileName, targetDirectory);
+      setFileName(null);
+      setSheets([]);
+      setPreviewDiamonds([]);
+      fallbackWorkbookRef.current = null;
+      onClose();
+    } else {
+      setErrorMsg('Не найдено валидных строк с весом в каратах для импорта.');
+    }
   };
 
   const resetState = () => {
@@ -309,6 +486,8 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     setEstimatedSkippedCount(0);
     setErrorMsg(null);
     setShowColumnMapper(false);
+    fallbackWorkbookRef.current = null;
+    pendingFileRef.current = null;
   };
 
   const activeSheetRowCount = sheets[selectedSheetIndex]?.rowCount || 0;
@@ -338,8 +517,8 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 Импорт каталога камней из .xlsx
               </h2>
               <p className="text-xs text-[#5A606D]">
-                Фоновая обработка больших прайс-листов (до 50 000+ строк) с автодедупликацией
-                и анализом заголовков (.xlsx, .xls, .csv)
+                Поддержка больших прайс-листов (до 50 000+ строк) с автодедупликацией,
+                сортировкой белых и цветных камней и анализом заголовков (.xlsx, .xls, .csv)
               </p>
             </div>
           </div>
@@ -365,38 +544,49 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
 
           {!fileName ? (
             <div className="space-y-4">
-              <div
+              {/* Native <label> + sr-only <input type="file"> ensures reliable OS file dialog without bubbling recursion */}
+              <input
+                id={fileInputId}
+                type="file"
+                accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+                disabled={isParsing}
+                onChange={handleFileChange}
+                className="sr-only"
+              />
+              <label
+                htmlFor={fileInputId}
                 onDragOver={(e) => {
                   e.preventDefault();
                   setIsDragging(true);
                 }}
                 onDragLeave={() => setIsDragging(false)}
                 onDrop={handleDrop}
-                onClick={() => !isParsing && fileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors ${
-                  isDragging
-                    ? 'border-[#1B365D] bg-[#F4F7FB]'
-                    : 'border-[#D5D9E0] bg-[#FAFAFA] hover:border-[#1B365D]'
+                className={`block border-2 border-dashed rounded-xl p-10 text-center transition-colors ${
+                  isParsing
+                    ? 'border-[#1B365D] bg-[#F4F7FB] cursor-wait'
+                    : isDragging
+                      ? 'border-[#1B365D] bg-[#F4F7FB] cursor-pointer'
+                      : 'border-[#D5D9E0] bg-[#FAFAFA] hover:border-[#1B365D] cursor-pointer'
                 }`}
               >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".xlsx,.xls,.csv"
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
                 <Upload className="w-9 h-9 text-[#1B365D] mx-auto mb-3" />
                 <div className="text-sm font-semibold text-[#111317]">
                   {isParsing
-                    ? 'Фоновое чтение и анализ структуры файла...'
+                    ? 'Чтение и анализ структуры файла...'
                     : 'Перетащите файл .xlsx сюда или нажмите для выбора'}
                 </div>
                 <p className="text-xs text-[#5A606D] mt-1.5 max-w-md mx-auto">
-                  Разбор таблицы выполняется в отдельном потоке Web Worker без блокировки
-                  интерфейса — поддерживаются прайс-листы на 30 000–50 000 строк.
+                  Поддерживаются файлы .xlsx, .xls и .csv объёмом до 50 000 строк. Камни с
+                  цветом D–J автоматически направляются в белые бриллианты, цветные — в
+                  директорию цветных.
                 </p>
-              </div>
+                {!isParsing && (
+                  <span className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-[#1B365D] text-white">
+                    <Upload className="w-3.5 h-3.5" />
+                    Выбрать файл на устройстве
+                  </span>
+                )}
+              </label>
 
               <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-[#FAFAFA] border border-[#E4E6EB] rounded-lg">
                 <div className="text-xs text-[#5A606D]">
@@ -714,7 +904,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={handleConfirmImport}
+                  onClick={() => void handleConfirmImport()}
                   disabled={estimatedValidCount === 0 || isMappingAll}
                   className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-medium rounded-lg bg-[#1B365D] text-white hover:bg-[#142947] disabled:opacity-50 transition-colors"
                 >

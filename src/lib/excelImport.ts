@@ -73,11 +73,19 @@ export function extractSheetRowsFast(
   return rows;
 }
 
+async function loadXlsx(): Promise<typeof XLSXType> {
+  const mod = (await import('xlsx')) as unknown as {
+    read?: typeof XLSXType.read;
+    default?: typeof XLSXType;
+  };
+  return (mod.read ? mod : mod.default || mod) as typeof XLSXType;
+}
+
 export async function parseExcelBuffer(
   buffer: ArrayBuffer,
   fileName: string
 ): Promise<ParsedExcelWorkbook> {
-  const XLSX = await import('xlsx');
+  const XLSX = await loadXlsx();
   const workbook = XLSX.read(buffer, {
     type: 'array',
     dense: false,
@@ -113,7 +121,7 @@ export async function parseExcelFile(file: File): Promise<ParsedExcelWorkbook> {
 }
 
 export async function downloadSampleXlsx(): Promise<void> {
-  const XLSX = await import('xlsx');
+  const XLSX = await loadXlsx();
   const rows = [
     [
       'SKU',
