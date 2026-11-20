@@ -50,6 +50,8 @@ interface ManagerCabinetViewProps {
   pricingConfig: PricingConfig;
   managerEmail?: string | null;
   isAdminSignedIn?: boolean;
+  isLoggingIn?: boolean;
+  authError?: string | null;
   isSyncingCloud?: boolean;
   syncProgress?: RegistrySyncProgress | null;
   cloudStatusMessage?: string | null;
@@ -90,6 +92,8 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
   pricingConfig,
   managerEmail,
   isAdminSignedIn = false,
+  isLoggingIn = false,
+  authError = null,
   isSyncingCloud = false,
   syncProgress = null,
   cloudStatusMessage = null,
@@ -576,15 +580,33 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
               ) : (
                 <button
                   type="button"
+                  disabled={isLoggingIn}
                   onClick={onRequestGoogleLogin}
-                  className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg border border-[#1B365D] bg-[#F4F7FB] text-[#1B365D] hover:bg-[#E5EDF7] transition-colors whitespace-nowrap"
+                  className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg border border-[#1B365D] bg-[#F4F7FB] text-[#1B365D] hover:bg-[#E5EDF7] disabled:opacity-60 transition-colors whitespace-nowrap"
                 >
                   <CloudUpload className="w-4 h-4" />
-                  Войти с Google для публикации в облако
+                  {isLoggingIn
+                    ? 'Открытие окна Google...'
+                    : managerEmail
+                      ? 'Сменить аккаунт Google'
+                      : 'Войти с Google для публикации в облако'}
                 </button>
               )}
             </div>
           </div>
+
+          {!isAdminSignedIn && managerEmail && !authError && (
+            <div className="px-3.5 py-2.5 rounded-lg bg-[#FFFBEB] border border-[#FDE68A] text-xs text-[#92400E]">
+              Вы вошли как <span className="font-mono font-medium">{managerEmail}</span>.
+              Для публикации в общую облачную базу войдите под учётной записью администратора.
+            </div>
+          )}
+
+          {authError && (
+            <div className="px-3.5 py-2.5 rounded-lg bg-[#FEF2F2] border border-[#FECACA] text-xs text-[#991B1B]">
+              {authError}
+            </div>
+          )}
 
           {/* Cloud Publish Progress Bar */}
           {isSyncingCloud && syncProgress && (

@@ -36,6 +36,14 @@ import {
 } from './lib/catalogPersistence';
 import { isVerifiedAdminEmail } from './lib/firebase';
 import {
+  formatGoogleAuthError,
+  getAccessToken,
+  googleSignIn,
+  googleSignInForCloud,
+  initAuth,
+  logout,
+} from './lib/googleAuth';
+import {
   AppSection,
   Diamond,
   DiamondFilters,
@@ -229,7 +237,26 @@ const DEFAULT_FILTERS: DiamondFilters = {
 };
 
 export default function App() {
-  const [activeSection, setActiveSection] = useState<AppSection>('catalog');
+  const [activeSection, setActiveSection] = useState<AppSection>(() => {
+    if (typeof window === 'undefined') return 'catalog';
+    try {
+      const saved = window.sessionStorage.getItem('diamonds_selector_section_v1');
+      if (
+        saved === 'catalog' ||
+        saved === 'fancy' ||
+        saved === 'pair-finder' ||
+        saved === 'compare' ||
+        saved === 'cart' ||
+        saved === 'manager' ||
+        saved === 'sheets'
+      ) {
+        return saved;
+      }
+    } catch {
+      // ignore storage restrictions
+    }
+    return 'catalog';
+  });
   const [catalog, setCatalog] = useState<Diamond[]>(ALL_INITIAL_DIAMONDS);
   const [suppliers, setSuppliers] = useState<SupplierFeed[]>(() =>
     rebuildSupplierFeeds(ALL_INITIAL_DIAMONDS, [])
@@ -250,6 +277,7 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const isAdminSignedIn = isVerifiedAdminEmail(user?.email, user?.emailVerified);
 
@@ -282,8 +310,15 @@ export default function App() {
     }
   });
 
-  // Manager Cabinet password unlock state (password: 0000)
-  const [isManagerUnlocked, setIsManagerUnlocked] = useState(false);
+  // Manager Cabinet password unlock state (password: 0000; preserved in sessionStorage during auth popup)
+  const [isManagerUnlocked, setIsManagerUnlocked] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return window.sessionStorage.getItem('diamonds_selector_mgr_unlocked_v1') === '1';
+    } catch {
+      return false;
+    }
+  });
 
   // Pair Finder anchor
   const [pairAnchorId, setPairAnchorId] = useState<string | null>('dm-001');
@@ -319,37 +354,49 @@ export default function App() {
     }
   }, [submittedOrders]);
 
-  // Lazily load Firebase Auth after initial paint so Firebase SDK is code-split
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem('diamonds_selector_section_v1', activeSection);
+    } catch {
+      // ignore storage errors
+    }
+  }, [activeSection]);
+
+  useEffect(() => {
+    try {
+      if (isManagerUnlocked) {
+        window.sessionStorage.setItem('diamonds_selector_mgr_unlocked_v1', '1');
+      } else {
+        window.sessionStorage.removeItem('diamonds_selector_mgr_unlocked_v1');
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, [isManagerUnlocked]);
+
+  // Subscribe to Firebase Auth state directly (no async dynamic import)
   React.useEffect(() => {
     let active = true;
-    let unsubscribe: (() => void) | undefined;
-
-    import('./lib/googleAuth')
-      .then((authMod) => {
+    const unsubscribe = initAuth(
+      (signedInUser, token) => {
         if (!active) return;
-        unsubscribe = authMod.initAuth(
-          (signedInUser, token) => {
-            if (!active) return;
-            setUser(signedInUser);
-            setAccessToken(token);
-          },
-          () => {
-            if (!active) return;
-            setUser(null);
-            setAccessToken(null);
-          }
-        );
-        authMod.getAccessToken().then((t) => {
-          if (active && t) setAccessToken(t);
-        });
-      })
-      .catch(() => {
-        // Ignore auth chunk errors in offline/SSR contexts
-      });
+        setUser(signedInUser);
+        setAccessToken(token);
+        setAuthError(null);
+      },
+      () => {
+        if (!active) return;
+        setUser(null);
+        setAccessToken(null);
+      }
+    );
+    getAccessToken().then((t) => {
+      if (active && t) setAccessToken(t);
+    });
 
     return () => {
       active = false;
-      unsubscribe?.();
+      unsubscribe();
     };
   }, []);
 
@@ -478,27 +525,48 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [catalog, suppliers, pricingConfig, registryVersion]);
 
-  const handleGoogleLogin = async () => {
+  // Synchronous invocation inside button click preserves Chrome popup user-gesture activation
+  const handleGoogleCloudLogin = () => {
+    if (isLoggingIn) return;
+    setAuthError(null);
     setIsLoggingIn(true);
-    try {
-      const authMod = await import('./lib/googleAuth');
-      const result = await authMod.googleSignIn();
-      if (result) {
+    googleSignInForCloud()
+      .then((result) => {
+        setUser(result.user);
+        if (result.accessToken) setAccessToken(result.accessToken);
+      })
+      .catch((err) => {
+        console.error('Google cloud login error:', err);
+        setAuthError(formatGoogleAuthError(err));
+      })
+      .finally(() => {
+        setIsLoggingIn(false);
+      });
+  };
+
+  const handleGoogleSheetsLogin = () => {
+    if (isLoggingIn) return;
+    setAuthError(null);
+    setIsLoggingIn(true);
+    googleSignIn()
+      .then((result) => {
         setUser(result.user);
         setAccessToken(result.accessToken);
-      }
-    } catch (err) {
-      console.error('Google login error:', err);
-    } finally {
-      setIsLoggingIn(false);
-    }
+      })
+      .catch((err) => {
+        console.error('Google Sheets login error:', err);
+        setAuthError(formatGoogleAuthError(err));
+      })
+      .finally(() => {
+        setIsLoggingIn(false);
+      });
   };
 
   const handleGoogleLogout = async () => {
-    const authMod = await import('./lib/googleAuth');
-    await authMod.logout();
+    await logout();
     setUser(null);
     setAccessToken(null);
+    setAuthError(null);
   };
 
   // Active supplier filtering for client storefront (paused suppliers remain visible in Manager Cabinet)
@@ -970,7 +1038,7 @@ export default function App() {
               </button>
             ) : (
               <GoogleSignInButton
-                onClick={handleGoogleLogin}
+                onClick={handleGoogleCloudLogin}
                 disabled={isLoggingIn}
                 label={isLoggingIn ? 'Вход...' : 'Войти с Google'}
               />
@@ -1175,6 +1243,8 @@ export default function App() {
                   pricingConfig={pricingConfig}
                   managerEmail={user?.email ?? null}
                   isAdminSignedIn={isAdminSignedIn}
+                  isLoggingIn={isLoggingIn}
+                  authError={authError}
                   isSyncingCloud={isSyncingCloud}
                   syncProgress={syncProgress}
                   cloudStatusMessage={cloudStatusMessage}
@@ -1186,7 +1256,7 @@ export default function App() {
                   onToggleSupplierActive={handleToggleSupplierActive}
                   onDeleteSupplier={handleDeleteSupplier}
                   onPublishToCloud={() => void handlePublishToCloud()}
-                  onRequestGoogleLogin={() => void handleGoogleLogin()}
+                  onRequestGoogleLogin={handleGoogleCloudLogin}
                   onOpenExcelImport={() => handleOpenExcelImport('white')}
                   onLockCabinet={() => {
                     setIsManagerUnlocked(false);
@@ -1284,7 +1354,7 @@ export default function App() {
                 user={user}
                 accessToken={accessToken}
                 isLoggingIn={isLoggingIn}
-                onLogin={handleGoogleLogin}
+                onLogin={handleGoogleSheetsLogin}
                 onLogout={handleGoogleLogout}
                 catalog={catalog}
                 comparedDiamonds={comparedDiamonds}
