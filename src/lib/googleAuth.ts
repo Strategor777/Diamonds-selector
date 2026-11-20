@@ -2,12 +2,20 @@ import {
   GoogleAuthProvider,
   User,
   browserPopupRedirectResolver,
+  getRedirectResult,
   onAuthStateChanged,
   signInWithPopup,
+  signInWithRedirect,
 } from 'firebase/auth';
 import { auth } from './firebase';
 
 export const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
+
+export interface GoogleAuthErrorInfo {
+  code: string;
+  host: string;
+  message: string;
+}
 
 // Basic Google Auth provider for Firebase Firestore cloud publishing (no Workspace Sheets consent screen)
 const cloudProvider = new GoogleAuthProvider();
@@ -23,6 +31,15 @@ for (const scope of SCOPES) {
 let cachedAccessToken: string | null = null;
 let inFlightSignIn: Promise<{ user: User; accessToken: string | null }> | null = null;
 
+export const isStandaloneWindow = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.self === window.top;
+  } catch {
+    return false;
+  }
+};
+
 export const initAuth = (
   onAuthSuccess?: (user: User, token: string | null) => void,
   onAuthFailure?: () => void
@@ -35,6 +52,19 @@ export const initAuth = (
       onAuthFailure?.();
     }
   });
+};
+
+export const consumeRedirectSignIn = async (): Promise<{
+  user: User;
+  accessToken: string | null;
+} | null> => {
+  const result = await getRedirectResult(auth, browserPopupRedirectResolver);
+  if (!result) return null;
+  const credential = GoogleAuthProvider.credentialFromResult(result);
+  if (credential?.accessToken) {
+    cachedAccessToken = credential.accessToken;
+  }
+  return { user: result.user, accessToken: cachedAccessToken };
 };
 
 function runPopupSignIn(
@@ -73,6 +103,10 @@ export const googleSignInForCloud = (): Promise<{
   return runPopupSignIn(cloudProvider);
 };
 
+export const googleSignInForCloudRedirect = (): Promise<never> => {
+  return signInWithRedirect(auth, cloudProvider, browserPopupRedirectResolver);
+};
+
 export const googleSignIn = (): Promise<{
   user: User;
   accessToken: string | null;
@@ -89,30 +123,61 @@ export const logout = async () => {
   cachedAccessToken = null;
 };
 
-export function formatGoogleAuthError(err: unknown): string {
+export function parseGoogleAuthError(err: unknown): GoogleAuthErrorInfo {
   const code =
     typeof err === 'object' && err !== null && 'code' in err
-      ? String((err as { code?: unknown }).code || '')
+      ? String((err as { code?: unknown }).code || 'auth/unknown')
+      : 'auth/unknown';
+  const host =
+    typeof window !== 'undefined' && window.location?.hostname
+      ? window.location.hostname
       : '';
 
   if (code === 'auth/popup-blocked') {
-    return 'Браузер Chrome заблокировал всплывающее окно входа Google. Разрешите всплывающие окна для этого сайта в адресной строке и повторите попытку.';
+    return {
+      code,
+      host,
+      message:
+        'Браузер Chrome заблокировал всплывающее окно входа Google. Разрешите всплывающие окна в адресной строке или используйте кнопку «Войти в этой же вкладке».',
+    };
   }
   if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
-    return 'Окно входа Google было закрыто до завершения авторизации. Попробуйте нажать кнопку ещё раз.';
+    return {
+      code,
+      host,
+      message:
+        'Окно входа Google было закрыто до завершения авторизации. Повторите попытку или используйте «Войти в этой же вкладке».',
+    };
   }
   if (code === 'auth/unauthorized-domain') {
-    const currentHost =
-      typeof window !== 'undefined' && window.location?.hostname
-        ? window.location.hostname
-        : 'текущий домен';
-    return `Домен «${currentHost}» не добавлен в список разрешённых (Authorized domains) в Firebase Console → Authentication → Settings → Authorized domains (проект gen-lang-client-0688556848). Добавьте «${currentHost}» и повторите вход.`;
+    return {
+      code,
+      host,
+      message: `Домен «${host || 'текущий домен'}» не добавлен в список разрешённых доменов Firebase (Authorized domains). Добавьте именно это имя домена в настройках проекта и повторите вход.`,
+    };
   }
   if (code === 'auth/network-request-failed') {
-    return 'Нет соединения с сервером авторизации Google. Проверьте подключение к интернету.';
+    return {
+      code,
+      host,
+      message:
+        'Нет соединения с сервером авторизации Google. Проверьте подключение к интернету или отключите блокировщик/VPN для googleapis.com.',
+    };
   }
   if (err instanceof Error && err.message) {
-    return `Не удалось выполнить вход через Google: ${err.message}`;
+    return {
+      code,
+      host,
+      message: `Ошибка входа через Google (${code}): ${err.message}`,
+    };
   }
-  return 'Не удалось выполнить вход через Google. Попробуйте ещё раз.';
+  return {
+    code,
+    host,
+    message: `Не удалось выполнить вход через Google (${code}). Попробуйте ещё раз.`,
+  };
+}
+
+export function formatGoogleAuthError(err: unknown): string {
+  return parseGoogleAuthError(err).message;
 }

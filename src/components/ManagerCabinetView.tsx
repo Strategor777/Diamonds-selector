@@ -3,7 +3,9 @@ import {
   Building2,
   Check,
   CloudUpload,
+  Copy,
   Edit3,
+  ExternalLink,
   Eye,
   EyeOff,
   FileSpreadsheet,
@@ -32,6 +34,7 @@ import {
 } from '../data/diamonds';
 import { classifyColorFamily } from '../lib/diamondMapper';
 import type { RegistrySyncProgress } from '../lib/catalogPersistence';
+import type { GoogleAuthErrorInfo } from '../lib/googleAuth';
 import {
   CutGrade,
   Diamond,
@@ -51,7 +54,8 @@ interface ManagerCabinetViewProps {
   managerEmail?: string | null;
   isAdminSignedIn?: boolean;
   isLoggingIn?: boolean;
-  authError?: string | null;
+  authError?: GoogleAuthErrorInfo | null;
+  canUseRedirectSignIn?: boolean;
   isSyncingCloud?: boolean;
   syncProgress?: RegistrySyncProgress | null;
   cloudStatusMessage?: string | null;
@@ -64,6 +68,7 @@ interface ManagerCabinetViewProps {
   onDeleteSupplier: (supplierId: string) => void;
   onPublishToCloud: () => void;
   onRequestGoogleLogin: () => void;
+  onRequestGoogleRedirectLogin?: () => void;
   onOpenExcelImport: () => void;
   onLockCabinet?: () => void;
 }
@@ -94,6 +99,7 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
   isAdminSignedIn = false,
   isLoggingIn = false,
   authError = null,
+  canUseRedirectSignIn = false,
   isSyncingCloud = false,
   syncProgress = null,
   cloudStatusMessage = null,
@@ -106,11 +112,13 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
   onDeleteSupplier,
   onPublishToCloud,
   onRequestGoogleLogin,
+  onRequestGoogleRedirectLogin,
   onOpenExcelImport,
   onLockCabinet,
 }) => {
   const [directoryFilter, setDirectoryFilter] = useState<'all' | 'white' | 'fancy'>('all');
   const [supplierFilter, setSupplierFilter] = useState<string>('ALL');
+  const [copiedHost, setCopiedHost] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const deferredSearch = useDeferredValue(searchQuery);
   const [page, setPage] = useState(1);
@@ -578,19 +586,31 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                   {isSyncingCloud ? 'Публикация...' : 'Опубликовать в облачную базу'}
                 </button>
               ) : (
-                <button
-                  type="button"
-                  disabled={isLoggingIn}
-                  onClick={onRequestGoogleLogin}
-                  className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg border border-[#1B365D] bg-[#F4F7FB] text-[#1B365D] hover:bg-[#E5EDF7] disabled:opacity-60 transition-colors whitespace-nowrap"
-                >
-                  <CloudUpload className="w-4 h-4" />
-                  {isLoggingIn
-                    ? 'Открытие окна Google...'
-                    : managerEmail
-                      ? 'Сменить аккаунт Google'
-                      : 'Войти с Google для публикации в облако'}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    disabled={isLoggingIn}
+                    onClick={onRequestGoogleLogin}
+                    className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg border border-[#1B365D] bg-[#F4F7FB] text-[#1B365D] hover:bg-[#E5EDF7] disabled:opacity-60 transition-colors whitespace-nowrap"
+                  >
+                    <CloudUpload className="w-4 h-4" />
+                    {isLoggingIn
+                      ? 'Открытие окна Google...'
+                      : managerEmail
+                        ? 'Сменить аккаунт Google'
+                        : 'Войти с Google для публикации в облако'}
+                  </button>
+                  {canUseRedirectSignIn && onRequestGoogleRedirectLogin && (
+                    <button
+                      type="button"
+                      disabled={isLoggingIn}
+                      onClick={onRequestGoogleRedirectLogin}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-[#D5D9E0] bg-white text-[#5A606D] hover:text-[#111317] hover:bg-[#F7F8FA] disabled:opacity-60 transition-colors whitespace-nowrap"
+                    >
+                      Войти в этой же вкладке
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -603,8 +623,43 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
           )}
 
           {authError && (
-            <div className="px-3.5 py-2.5 rounded-lg bg-[#FEF2F2] border border-[#FECACA] text-xs text-[#991B1B]">
-              {authError}
+            <div className="px-3.5 py-3 rounded-lg bg-[#FEF2F2] border border-[#FECACA] text-xs text-[#991B1B] space-y-2">
+              <div className="leading-relaxed">{authError.message}</div>
+              <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                <span className="font-mono px-1.5 py-0.5 rounded bg-white/80 border border-[#FECACA]">
+                  {authError.code}
+                </span>
+                {authError.host && (
+                  <span className="font-mono px-1.5 py-0.5 rounded bg-white/80 border border-[#FECACA]">
+                    {authError.host}
+                  </span>
+                )}
+                {authError.code === 'auth/unauthorized-domain' && authError.host && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard?.writeText(authError.host).catch(() => {});
+                        setCopiedHost(true);
+                        window.setTimeout(() => setCopiedHost(false), 2500);
+                      }}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-[#FCA5A5] text-[#991B1B] hover:bg-[#FEE2E2] font-medium"
+                    >
+                      <Copy className="w-3 h-3" />
+                      {copiedHost ? 'Скопировано' : 'Скопировать домен'}
+                    </button>
+                    <a
+                      href="https://console.firebase.google.com/project/gen-lang-client-0688556848/authentication/settings"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-[#FCA5A5] text-[#991B1B] hover:bg-[#FEE2E2] font-medium"
+                    >
+                      Открыть настройки Firebase
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </>
+                )}
+              </div>
             </div>
           )}
 

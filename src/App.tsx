@@ -36,12 +36,16 @@ import {
 } from './lib/catalogPersistence';
 import { isVerifiedAdminEmail } from './lib/firebase';
 import {
-  formatGoogleAuthError,
+  GoogleAuthErrorInfo,
+  consumeRedirectSignIn,
   getAccessToken,
   googleSignIn,
   googleSignInForCloud,
+  googleSignInForCloudRedirect,
   initAuth,
+  isStandaloneWindow,
   logout,
+  parseGoogleAuthError,
 } from './lib/googleAuth';
 import {
   AppSection,
@@ -277,7 +281,8 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<GoogleAuthErrorInfo | null>(null);
+  const canUseRedirectSignIn = useMemo(() => isStandaloneWindow(), []);
 
   const isAdminSignedIn = isVerifiedAdminEmail(user?.email, user?.emailVerified);
 
@@ -374,7 +379,7 @@ export default function App() {
     }
   }, [isManagerUnlocked]);
 
-  // Subscribe to Firebase Auth state directly (no async dynamic import)
+  // Subscribe to Firebase Auth state directly and resolve any same-tab redirect sign-in result
   React.useEffect(() => {
     let active = true;
     const unsubscribe = initAuth(
@@ -390,6 +395,20 @@ export default function App() {
         setAccessToken(null);
       }
     );
+
+    consumeRedirectSignIn()
+      .then((res) => {
+        if (!active || !res) return;
+        setUser(res.user);
+        if (res.accessToken) setAccessToken(res.accessToken);
+        setAuthError(null);
+      })
+      .catch((err) => {
+        if (!active) return;
+        console.error('Google redirect sign-in error:', err);
+        setAuthError(parseGoogleAuthError(err));
+      });
+
     getAccessToken().then((t) => {
       if (active && t) setAccessToken(t);
     });
@@ -537,11 +556,22 @@ export default function App() {
       })
       .catch((err) => {
         console.error('Google cloud login error:', err);
-        setAuthError(formatGoogleAuthError(err));
+        setAuthError(parseGoogleAuthError(err));
       })
       .finally(() => {
         setIsLoggingIn(false);
       });
+  };
+
+  const handleGoogleCloudRedirectLogin = () => {
+    if (isLoggingIn) return;
+    setAuthError(null);
+    setIsLoggingIn(true);
+    googleSignInForCloudRedirect().catch((err) => {
+      console.error('Google redirect login error:', err);
+      setAuthError(parseGoogleAuthError(err));
+      setIsLoggingIn(false);
+    });
   };
 
   const handleGoogleSheetsLogin = () => {
@@ -555,7 +585,7 @@ export default function App() {
       })
       .catch((err) => {
         console.error('Google Sheets login error:', err);
-        setAuthError(formatGoogleAuthError(err));
+        setAuthError(parseGoogleAuthError(err));
       })
       .finally(() => {
         setIsLoggingIn(false);
@@ -1084,6 +1114,27 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-1">
+        {authError && activeSection !== 'manager' && (
+          <div className="max-w-7xl mx-auto px-6 pt-4">
+            <div className="p-3.5 rounded-lg bg-[#FEF2F2] border border-[#FECACA] text-xs text-[#991B1B] flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <div>{authError.message}</div>
+                <div className="font-mono text-[11px] opacity-80">
+                  {authError.code}
+                  {authError.host ? ` · ${authError.host}` : ''}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAuthError(null)}
+                aria-label="Скрыть ошибку входа"
+                className="text-[#991B1B] hover:text-[#7F1D1D] shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
         {activeSection === 'catalog' && (
           <>
             {/* Editorial Storefront Hero Split */}
@@ -1245,6 +1296,7 @@ export default function App() {
                   isAdminSignedIn={isAdminSignedIn}
                   isLoggingIn={isLoggingIn}
                   authError={authError}
+                  canUseRedirectSignIn={canUseRedirectSignIn}
                   isSyncingCloud={isSyncingCloud}
                   syncProgress={syncProgress}
                   cloudStatusMessage={cloudStatusMessage}
@@ -1257,6 +1309,7 @@ export default function App() {
                   onDeleteSupplier={handleDeleteSupplier}
                   onPublishToCloud={() => void handlePublishToCloud()}
                   onRequestGoogleLogin={handleGoogleCloudLogin}
+                  onRequestGoogleRedirectLogin={handleGoogleCloudRedirectLogin}
                   onOpenExcelImport={() => handleOpenExcelImport('white')}
                   onLockCabinet={() => {
                     setIsManagerUnlocked(false);
