@@ -102,7 +102,11 @@ export function formatGoogleAuthError(err: unknown): string {
     return 'Окно входа Google было закрыто до завершения авторизации. Попробуйте нажать кнопку ещё раз.';
   }
   if (code === 'auth/unauthorized-domain') {
-    return 'Текущий домен не добавлен в список разрешённых для входа Google в настройках проекта Firebase.';
+    const currentHost =
+      typeof window !== 'undefined' && window.location?.hostname
+        ? window.location.hostname
+        : 'текущий домен';
+    return `Домен «${currentHost}» не добавлен в список разрешённых (Authorized domains) в Firebase Console → Authentication → Settings → Authorized domains (проект gen-lang-client-0688556848). Добавьте «${currentHost}» и повторите вход.`;
   }
   if (code === 'auth/network-request-failed') {
     return 'Нет соединения с сервером авторизации Google. Проверьте подключение к интернету.';
