@@ -35,6 +35,7 @@ export type ExcelImportMode = 'none' | 'supplier' | 'all';
 interface ExcelImportModalProps {
   open: boolean;
   defaultTargetDirectory?: 'white' | 'fancy';
+  defaultImportMode?: ExcelImportMode;
   pricingConfig: PricingConfig;
   existingSuppliers?: SupplierFeed[];
   onClose: () => void;
@@ -83,6 +84,7 @@ function buildSupplierId(name: string, existingSuppliers: SupplierFeed[]): strin
 export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   open,
   defaultTargetDirectory = 'white',
+  defaultImportMode = 'none',
   pricingConfig,
   existingSuppliers = [],
   onClose,
@@ -116,7 +118,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   const [estimatedSkippedCount, setEstimatedSkippedCount] = useState(0);
 
   const [showColumnMapper, setShowColumnMapper] = useState(false);
-  const [importMode, setImportMode] = useState<ExcelImportMode>('none');
+  const [importMode, setImportMode] = useState<ExcelImportMode>(defaultImportMode);
   const [supplierName, setSupplierName] = useState('');
   const [selectedSupplierId, setSelectedSupplierId] = useState<string | null>(null);
   const [targetDirectory, setTargetDirectory] = useState<'white' | 'fancy'>(
@@ -150,8 +152,9 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   useEffect(() => {
     if (open) {
       setTargetDirectory(defaultTargetDirectory);
+      setImportMode(defaultImportMode);
     }
-  }, [open, defaultTargetDirectory]);
+  }, [open, defaultTargetDirectory, defaultImportMode]);
 
   useEffect(() => {
     if (!open) return;

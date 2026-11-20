@@ -1,5 +1,6 @@
 import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   Building2,
   Check,
   CloudUpload,
@@ -14,6 +15,7 @@ import {
   Plus,
   RotateCcw,
   Search,
+  SlidersHorizontal,
   Trash2,
   X,
 } from 'lucide-react';
@@ -39,13 +41,23 @@ import {
   CutGrade,
   Diamond,
   DiamondShape,
+  GrowthType,
   PriceCurrency,
   PricingConfig,
   PricingMode,
   SupplierFeed,
 } from '../types/diamond';
+import type { ExcelImportMode } from './ExcelImportModal';
 import { NumericInput } from './NumericInput';
 import { PaginationBar } from './PaginationBar';
+
+export interface BulkAssortmentPatch {
+  directory?: 'white' | 'fancy';
+  growthType?: GrowthType;
+  supplierName?: string;
+  pricingAction?: 'keep' | 'apply' | 'reset-to-cost';
+  pricingConfig?: PricingConfig;
+}
 
 interface ManagerCabinetViewProps {
   catalog: Diamond[];
@@ -64,12 +76,14 @@ interface ManagerCabinetViewProps {
   onUpdateDiamond: (updated: Diamond) => void;
   onAddDiamond: (created: Diamond) => void;
   onDeleteDiamond: (diamondId: string) => void;
+  onBulkUpdateAssortment: (stoneIds: string[] | null, patch: BulkAssortmentPatch) => void;
+  onClearAssortment: (mode: 'all' | 'ids' | 'restore-demo', stoneIds?: string[]) => void;
   onToggleSupplierActive: (supplierId: string) => void;
   onDeleteSupplier: (supplierId: string) => void;
   onPublishToCloud: () => void;
   onRequestGoogleLogin: () => void;
   onRequestGoogleRedirectLogin?: () => void;
-  onOpenExcelImport: () => void;
+  onOpenExcelImport: (mode?: ExcelImportMode) => void;
   onLockCabinet?: () => void;
 }
 
@@ -108,6 +122,8 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
   onUpdateDiamond,
   onAddDiamond,
   onDeleteDiamond,
+  onBulkUpdateAssortment,
+  onClearAssortment,
   onToggleSupplierActive,
   onDeleteSupplier,
   onPublishToCloud,
@@ -126,6 +142,17 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
   const [draftConfig, setDraftConfig] = useState<PricingConfig>(pricingConfig);
   const [feedbackBanner, setFeedbackBanner] = useState<string | null>(null);
   const [editorDraft, setEditorDraft] = useState<EditorDraft | null>(null);
+
+  // Clear Assortment & Edit Assortment modals
+  const [isClearModalOpen, setIsClearModalOpen] = useState(false);
+  const [isEditAssortmentOpen, setIsEditAssortmentOpen] = useState(false);
+  const [bulkScope, setBulkScope] = useState<'all' | 'filtered'>('filtered');
+  const [bulkDirectory, setBulkDirectory] = useState<'keep' | 'white' | 'fancy'>('keep');
+  const [bulkGrowthType, setBulkGrowthType] = useState<'keep' | GrowthType>('keep');
+  const [bulkSupplierName, setBulkSupplierName] = useState('');
+  const [bulkPricingAction, setBulkPricingAction] = useState<'keep' | 'apply' | 'reset-to-cost'>('keep');
+  const [bulkPricingMode, setBulkPricingMode] = useState<PricingMode>(pricingConfig.mode);
+  const [bulkPricingValue, setBulkPricingValue] = useState<number>(pricingConfig.value);
 
   useEffect(() => {
     setDraftConfig(pricingConfig);
@@ -469,14 +496,39 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2.5">
               <button
                 type="button"
-                onClick={onOpenExcelImport}
+                onClick={() => onOpenExcelImport('none')}
                 className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-medium rounded-lg border border-[#D5D9E0] bg-white text-[#111317] hover:bg-[#F7F8FA] transition-colors whitespace-nowrap shrink-0"
               >
                 <FileSpreadsheet className="w-4 h-4 text-[#1B365D]" />
                 Загрузить прайс .xlsx
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setBulkScope(filteredCatalog.length < catalog.length ? 'filtered' : 'all');
+                  setBulkDirectory('keep');
+                  setBulkGrowthType('keep');
+                  setBulkSupplierName('');
+                  setBulkPricingAction('keep');
+                  setBulkPricingMode(draftConfig.mode);
+                  setBulkPricingValue(draftConfig.value);
+                  setIsEditAssortmentOpen(true);
+                }}
+                className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-medium rounded-lg border border-[#1B365D] bg-[#F4F7FB] text-[#1B365D] hover:bg-[#E5EDF7] transition-colors whitespace-nowrap shrink-0"
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+                Изменить ассортимент
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsClearModalOpen(true)}
+                className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-medium rounded-lg border border-[#FECACA] bg-[#FEF2F2] text-[#991B1B] hover:bg-[#FEE2E2] transition-colors whitespace-nowrap shrink-0"
+              >
+                <Trash2 className="w-4 h-4" />
+                Очистить ассортимент
               </button>
               <button
                 type="button"
@@ -503,10 +555,11 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 pt-6 border-t border-[#E4E6EB] text-sm">
             <div>
               <div className="font-mono tabular-nums text-lg font-semibold text-[#111317]">
-                {summary.totalCount} камней
+                {summary.totalCount.toLocaleString('ru-RU')} камней
               </div>
               <div className="text-xs text-[#5A606D] mt-0.5">
-                Общий: {summary.whiteCount} · Цветные: {summary.fancyCount}
+                Белые: {summary.whiteCount.toLocaleString('ru-RU')} · Цветные:{' '}
+                {summary.fancyCount.toLocaleString('ru-RU')}
               </div>
             </div>
             <div>
@@ -973,9 +1026,9 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
             <div className="inline-flex items-center gap-1 p-1 bg-[#F1F3F5] rounded-lg">
               {(
                 [
-                  { id: 'all', label: `Все (${catalog.length})` },
-                  { id: 'white', label: 'Общий каталог' },
-                  { id: 'fancy', label: 'Цветные бриллианты' },
+                  { id: 'all', label: `Все (${catalog.length.toLocaleString('ru-RU')})` },
+                  { id: 'white', label: 'Белые (D–J)' },
+                  { id: 'fancy', label: 'Цветные (Fancy)' },
                 ] as const
               ).map((tab) => (
                 <button
@@ -1944,6 +1997,420 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Clear Assortment Modal (Очистить ассортимент) */}
+      {isClearModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-xs p-4 md:p-6 overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Очистить ассортимент"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsClearModalOpen(false);
+          }}
+        >
+          <div className="bg-white border border-[#E4E6EB] rounded-xl max-w-lg w-full overflow-hidden shadow-2xl my-auto">
+            <div className="flex items-center justify-between gap-4 px-6 py-4 border-b border-[#E4E6EB]">
+              <div className="flex items-center gap-2.5">
+                <AlertTriangle className="w-5 h-5 text-[#991B1B] shrink-0" />
+                <h2 className="text-lg font-semibold text-[#111317]">
+                  Очистить ассортимент
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsClearModalOpen(false)}
+                aria-label="Закрыть окно очистки"
+                className="w-9 h-9 rounded-lg border border-[#E4E6EB] flex items-center justify-center text-[#5A606D] hover:text-[#111317]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-xs">
+              <p className="text-[#5A606D] leading-relaxed">
+                Выберите область очистки каталога. Изменения сразу сохраняются в
+                локальной базе (после перезагрузки удалённые позиции не вернутся)
+                {isAdminSignedIn
+                  ? ' и автоматически обновляются в облачной витрине.'
+                  : '.'}
+              </p>
+
+              <div className="space-y-2.5">
+                <button
+                  type="button"
+                  disabled={catalog.length === 0}
+                  onClick={() => {
+                    onClearAssortment('all');
+                    setDirectoryFilter('all');
+                    setSupplierFilter('ALL');
+                    setSearchQuery('');
+                    setIsClearModalOpen(false);
+                    setFeedbackBanner(
+                      'Ассортимент полностью очищен (0 камней). Загрузите новый прайс-лист или добавьте камни вручную.'
+                    );
+                  }}
+                  className="w-full text-left p-4 rounded-lg border border-[#FECACA] bg-[#FEF2F2] hover:bg-[#FEE2E2] disabled:opacity-45 transition-colors"
+                >
+                  <div className="font-semibold text-[#991B1B]">
+                    Полностью очистить весь ассортимент ({catalog.length.toLocaleString('ru-RU')} поз.)
+                  </div>
+                  <div className="text-[#7F1D1D]/80 mt-0.5">
+                    Удалит все белые и цветные камни, а также список поставщиков.
+                  </div>
+                </button>
+
+                {filteredCatalog.length > 0 && filteredCatalog.length < catalog.length && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const ids = filteredCatalog.map((d) => d.id);
+                      onClearAssortment('ids', ids);
+                      setIsClearModalOpen(false);
+                      setFeedbackBanner(
+                        `Удалено ${ids.length.toLocaleString('ru-RU')} позиций по текущему фильтру.`
+                      );
+                    }}
+                    className="w-full text-left p-4 rounded-lg border border-[#E4E6EB] bg-[#FAFAFA] hover:border-[#991B1B] transition-colors"
+                  >
+                    <div className="font-semibold text-[#111317]">
+                      Очистить только текущую выборку ({filteredCatalog.length.toLocaleString('ru-RU')} поз.)
+                    </div>
+                    <div className="text-[#5A606D] mt-0.5">
+                      Удалит только отфильтрованные строки в таблице (например, одного
+                      поставщика или только цветные/белые камни).
+                    </div>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClearAssortment('restore-demo');
+                    setDirectoryFilter('all');
+                    setSupplierFilter('ALL');
+                    setSearchQuery('');
+                    setIsClearModalOpen(false);
+                    setFeedbackBanner(
+                      'Восстановлен базовый демонстрационный каталог (белые, цветные и античные камни).'
+                    );
+                  }}
+                  className="w-full text-left p-4 rounded-lg border border-[#E4E6EB] bg-white hover:bg-[#F7F8FA] transition-colors"
+                >
+                  <div className="font-semibold text-[#111317]">
+                    Сбросить к стартовому демо-каталогу
+                  </div>
+                  <div className="text-[#5A606D] mt-0.5">
+                    Заменит текущую базу встроенным набором образцов.
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <div className="px-6 py-3.5 border-t border-[#E4E6EB] flex justify-end bg-[#FAFAFA]">
+              <button
+                type="button"
+                onClick={() => setIsClearModalOpen(false)}
+                className="px-4 py-2 text-xs font-medium rounded-lg border border-[#D5D9E0] bg-white text-[#111317] hover:bg-[#F7F8FA]"
+              >
+                Отмена
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Assortment Modal (Изменить ассортимент) */}
+      {isEditAssortmentOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-xs p-4 md:p-6 overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Изменить ассортимент"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsEditAssortmentOpen(false);
+          }}
+        >
+          <div className="bg-white border border-[#E4E6EB] rounded-xl max-w-2xl w-full overflow-hidden shadow-2xl my-auto">
+            <div className="flex items-center justify-between gap-4 px-6 py-4 border-b border-[#E4E6EB]">
+              <div className="flex items-center gap-2.5">
+                <SlidersHorizontal className="w-5 h-5 text-[#1B365D] shrink-0" />
+                <div>
+                  <h2 className="text-lg font-semibold text-[#111317]">
+                    Изменить ассортимент
+                  </h2>
+                  <p className="text-xs text-[#5A606D]">
+                    Обновите базу новым прайс-листом или массово измените параметры
+                    текущих камней
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsEditAssortmentOpen(false)}
+                aria-label="Закрыть окно изменения ассортимента"
+                className="w-9 h-9 rounded-lg border border-[#E4E6EB] flex items-center justify-center text-[#5A606D] hover:text-[#111317]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6 max-h-[78vh] overflow-y-auto text-xs">
+              {/* Section A: File-based Assortment Replacement / Update */}
+              <div className="space-y-2.5">
+                <div className="font-semibold text-[#111317] text-sm">
+                  1. Заменить или обновить ассортимент из файла (.xlsx / .csv)
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditAssortmentOpen(false);
+                      onOpenExcelImport('all');
+                    }}
+                    className="text-left p-3.5 rounded-lg border border-[#1B365D]/40 bg-[#F4F7FB] hover:bg-[#E5EDF7] transition-colors"
+                  >
+                    <div className="font-semibold text-[#1B365D]">
+                      Заменить весь реестр
+                    </div>
+                    <div className="text-[11px] text-[#5A606D] mt-1 leading-snug">
+                      Полностью заменить текущий каталог позициями из нового файла.
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditAssortmentOpen(false);
+                      onOpenExcelImport('supplier');
+                    }}
+                    className="text-left p-3.5 rounded-lg border border-[#E4E6EB] bg-[#FAFAFA] hover:border-[#1B365D] transition-colors"
+                  >
+                    <div className="font-semibold text-[#111317]">
+                      Обновить поставщика
+                    </div>
+                    <div className="text-[11px] text-[#5A606D] mt-1 leading-snug">
+                      Заменить прайс одного поставщика, сохранив остальных.
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditAssortmentOpen(false);
+                      onOpenExcelImport('none');
+                    }}
+                    className="text-left p-3.5 rounded-lg border border-[#E4E6EB] bg-[#FAFAFA] hover:border-[#1B365D] transition-colors"
+                  >
+                    <div className="font-semibold text-[#111317]">
+                      Дополнить реестр
+                    </div>
+                    <div className="text-[11px] text-[#5A606D] mt-1 leading-snug">
+                      Добавить новые позиции с дедупликацией по сертификатам.
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Section B: Bulk In-Place Assortment Modification */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const targetIds =
+                    bulkScope === 'filtered' ? filteredCatalog.map((d) => d.id) : null;
+                  const targetCount =
+                    targetIds === null ? catalog.length : targetIds.length;
+                  if (targetCount === 0) return;
+
+                  const patch: BulkAssortmentPatch = {};
+                  if (bulkDirectory !== 'keep') patch.directory = bulkDirectory;
+                  if (bulkGrowthType !== 'keep') patch.growthType = bulkGrowthType;
+                  if (bulkSupplierName.trim()) {
+                    patch.supplierName = bulkSupplierName.trim();
+                  }
+                  if (bulkPricingAction !== 'keep') {
+                    patch.pricingAction = bulkPricingAction;
+                    if (bulkPricingAction === 'apply') {
+                      patch.pricingConfig = {
+                        ...draftConfig,
+                        mode: bulkPricingMode,
+                        value: bulkPricingValue,
+                      };
+                    }
+                  }
+
+                  if (Object.keys(patch).length === 0) {
+                    setIsEditAssortmentOpen(false);
+                    return;
+                  }
+
+                  onBulkUpdateAssortment(targetIds, patch);
+                  setIsEditAssortmentOpen(false);
+                  setFeedbackBanner(
+                    `Ассортимент изменён: обновлено ${targetCount.toLocaleString('ru-RU')} поз.`
+                  );
+                }}
+                className="pt-4 border-t border-[#E4E6EB] space-y-4"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-semibold text-[#111317] text-sm">
+                    2. Массовое изменение параметров в базе
+                  </div>
+                  <div className="inline-flex items-center gap-1 p-0.5 bg-[#F1F3F5] rounded-md">
+                    <button
+                      type="button"
+                      onClick={() => setBulkScope('all')}
+                      className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors tabular-nums ${
+                        bulkScope === 'all'
+                          ? 'bg-white text-[#111317] shadow-sm'
+                          : 'text-[#5A606D]'
+                      }`}
+                    >
+                      Весь каталог ({catalog.length.toLocaleString('ru-RU')})
+                    </button>
+                    <button
+                      type="button"
+                      disabled={filteredCatalog.length === 0}
+                      onClick={() => setBulkScope('filtered')}
+                      className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors tabular-nums disabled:opacity-40 ${
+                        bulkScope === 'filtered'
+                          ? 'bg-white text-[#111317] shadow-sm'
+                          : 'text-[#5A606D]'
+                      }`}
+                    >
+                      Текущая выборка ({filteredCatalog.length.toLocaleString('ru-RU')})
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[#5A606D] mb-1">
+                      Категория (Белый / Цветной)
+                    </label>
+                    <select
+                      value={bulkDirectory}
+                      onChange={(e) =>
+                        setBulkDirectory(e.target.value as 'keep' | 'white' | 'fancy')
+                      }
+                      className="w-full px-3 py-2 text-xs bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg"
+                    >
+                      <option value="keep">— Не изменять —</option>
+                      <option value="white">Перевести в Белые (D–J)</option>
+                      <option value="fancy">Перевести в Цветные (Fancy)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[#5A606D] mb-1">
+                      Происхождение / Тип роста
+                    </label>
+                    <select
+                      value={bulkGrowthType}
+                      onChange={(e) =>
+                        setBulkGrowthType(e.target.value as 'keep' | GrowthType)
+                      }
+                      className="w-full px-3 py-2 text-xs bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg"
+                    >
+                      <option value="keep">— Не изменять —</option>
+                      <option value="Natural">Природные (Natural)</option>
+                      <option value="CVD">Лабораторные (CVD)</option>
+                      <option value="HPHT">Лабораторные (HPHT)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[#5A606D] mb-1">
+                      Назначить / переименовать поставщика
+                    </label>
+                    <input
+                      type="text"
+                      value={bulkSupplierName}
+                      onChange={(e) => setBulkSupplierName(e.target.value)}
+                      placeholder="Оставьте пустым, чтобы не менять"
+                      className="w-full px-3 py-2 text-xs bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[#5A606D] mb-1">
+                      Пересчёт клиентской цены
+                    </label>
+                    <select
+                      value={bulkPricingAction}
+                      onChange={(e) =>
+                        setBulkPricingAction(
+                          e.target.value as 'keep' | 'apply' | 'reset-to-cost'
+                        )
+                      }
+                      className="w-full px-3 py-2 text-xs bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg"
+                    >
+                      <option value="keep">— Не изменять цены —</option>
+                      <option value="apply">Применить новую наценку / коэффициент</option>
+                      <option value="reset-to-cost">Сбросить к входной цене (×1.00)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {bulkPricingAction === 'apply' && (
+                  <div className="grid grid-cols-2 gap-3 p-3 bg-[#FAFAFA] border border-[#E4E6EB] rounded-lg">
+                    <div>
+                      <label className="block text-[#5A606D] mb-1">Способ наценки</label>
+                      <select
+                        value={bulkPricingMode}
+                        onChange={(e) =>
+                          setBulkPricingMode(e.target.value as PricingMode)
+                        }
+                        className="w-full px-3 py-1.5 text-xs bg-white border border-[#D5D9E0] rounded-md"
+                      >
+                        <option value="multiplier">Коэффициент (×)</option>
+                        <option value="percent">Процентная наценка (%)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[#5A606D] mb-1">
+                        {bulkPricingMode === 'multiplier' ? 'Значение (×)' : 'Значение (%)'}
+                      </label>
+                      <NumericInput
+                        min={bulkPricingMode === 'multiplier' ? 0.5 : -50}
+                        max={bulkPricingMode === 'multiplier' ? 10 : 500}
+                        allowNegative={bulkPricingMode === 'percent'}
+                        value={bulkPricingValue}
+                        onValueChange={setBulkPricingValue}
+                        className="w-full px-3 py-1.5 text-xs font-mono tabular-nums bg-white border border-[#D5D9E0] rounded-md"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditAssortmentOpen(false)}
+                    className="px-4 py-2 text-xs font-medium rounded-lg border border-[#D5D9E0] bg-white text-[#111317] hover:bg-[#F7F8FA]"
+                  >
+                    Отмена
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={
+                      (bulkScope === 'filtered' ? filteredCatalog.length : catalog.length) ===
+                      0
+                    }
+                    className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-[#1B365D] text-white hover:bg-[#142947] disabled:opacity-45"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    Применить изменения (
+                    {(bulkScope === 'filtered'
+                      ? filteredCatalog.length
+                      : catalog.length
+                    ).toLocaleString('ru-RU')}{' '}
+                    поз.)
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
         </div>
       )}
     </div>

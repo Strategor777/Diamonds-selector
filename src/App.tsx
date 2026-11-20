@@ -10,7 +10,10 @@ import { CatalogSection } from './components/CatalogSection';
 import { DiamondDetailModal } from './components/DiamondDetailModal';
 import { ExcelImportModal, ExcelImportMode } from './components/ExcelImportModal';
 import { GoogleSignInButton } from './components/GoogleSignInButton';
-import { ManagerCabinetView } from './components/ManagerCabinetView';
+import {
+  BulkAssortmentPatch,
+  ManagerCabinetView,
+} from './components/ManagerCabinetView';
 import { ManagerPasswordGate } from './components/ManagerPasswordGate';
 import {
   ALL_INITIAL_DIAMONDS,
@@ -94,13 +97,6 @@ function lazyWithRetry<T extends React.ComponentType<any>>(
 }
 
 // Route & modal-level code splitting to keep initial bundle lean and fast
-const FancyDiamondsView = lazyWithRetry(
-  () =>
-    import('./components/FancyDiamondsView').then((m) => ({
-      default: m.FancyDiamondsView,
-    })),
-  'fancy'
-);
 const PairFinderView = lazyWithRetry(
   () =>
     import('./components/PairFinderView').then((m) => ({
@@ -206,6 +202,7 @@ const SectionFallback = () => (
 );
 
 const DEFAULT_FILTERS: DiamondFilters = {
+  colorCategory: 'all',
   shapes: [],
   colors: [],
   colorFamilies: [],
@@ -247,7 +244,6 @@ export default function App() {
       const saved = window.sessionStorage.getItem('diamonds_selector_section_v1');
       if (
         saved === 'catalog' ||
-        saved === 'fancy' ||
         saved === 'pair-finder' ||
         saved === 'compare' ||
         saved === 'cart' ||
@@ -255,6 +251,9 @@ export default function App() {
         saved === 'sheets'
       ) {
         return saved;
+      }
+      if (saved === 'fancy') {
+        return 'catalog';
       }
     } catch {
       // ignore storage restrictions
@@ -265,7 +264,18 @@ export default function App() {
   const [suppliers, setSuppliers] = useState<SupplierFeed[]>(() =>
     rebuildSupplierFeeds(ALL_INITIAL_DIAMONDS, [])
   );
-  const [filters, setFilters] = useState<DiamondFilters>(DEFAULT_FILTERS);
+  const [filters, setFilters] = useState<DiamondFilters>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        if (window.sessionStorage.getItem('diamonds_selector_section_v1') === 'fancy') {
+          return { ...DEFAULT_FILTERS, colorCategory: 'fancy' };
+        }
+      } catch {
+        // ignore storage errors
+      }
+    }
+    return DEFAULT_FILTERS;
+  });
   const [pricingConfig, setPricingConfig] = useState<PricingConfig>(
     DEFAULT_PRICING_CONFIG
   );
@@ -336,6 +346,7 @@ export default function App() {
 
   const [isExcelModalOpen, setIsExcelModalOpen] = useState(false);
   const [excelTargetDirectory, setExcelTargetDirectory] = useState<'white' | 'fancy'>('white');
+  const [excelImportMode, setExcelImportMode] = useState<ExcelImportMode>('none');
   const [importBanner, setImportBanner] = useState<string | null>(null);
 
   const [heroImgError, setHeroImgError] = useState(false);
@@ -428,7 +439,7 @@ export default function App() {
       const localSnap = await loadLocalRegistry();
       if (!active) return;
 
-      if (localSnap && localSnap.catalog.length > 0) {
+      if (localSnap && (localSnap.catalog.length > 0 || localSnap.clearedExplicitly)) {
         localVersion = localSnap.version || 0;
         const hydratedSuppliers =
           localSnap.suppliers && localSnap.suppliers.length > 0
@@ -440,14 +451,16 @@ export default function App() {
           setPricingConfig(localSnap.pricingConfig);
         }
         setRegistryVersion(localVersion);
-        const bounds = computeCatalogBounds(localSnap.catalog, DEFAULT_FILTERS);
-        setFilters((prev) => ({
-          ...prev,
-          minCarat: Math.min(prev.minCarat, bounds.minCarat),
-          maxCarat: Math.max(prev.maxCarat, bounds.maxCarat),
-          minPrice: Math.min(prev.minPrice, bounds.minPrice),
-          maxPrice: Math.max(prev.maxPrice, bounds.maxPrice),
-        }));
+        if (localSnap.catalog.length > 0) {
+          const bounds = computeCatalogBounds(localSnap.catalog, DEFAULT_FILTERS);
+          setFilters((prev) => ({
+            ...prev,
+            minCarat: Math.min(prev.minCarat, bounds.minCarat),
+            maxCarat: Math.max(prev.maxCarat, bounds.maxCarat),
+            minPrice: Math.min(prev.minPrice, bounds.minPrice),
+            maxPrice: Math.max(prev.maxPrice, bounds.maxPrice),
+          }));
+        }
       }
 
       isHydratedRef.current = true;
@@ -457,7 +470,7 @@ export default function App() {
           includeManagerData: false,
           cachedVersion: localVersion,
         });
-        if (!active || !cloudSnap || cloudSnap.catalog.length === 0) return;
+        if (!active || !cloudSnap) return;
 
         if (cloudSnap.version > localVersion) {
           const nextSuppliers = rebuildSupplierFeeds(
@@ -467,20 +480,23 @@ export default function App() {
           setCatalog(cloudSnap.catalog);
           setSuppliers(nextSuppliers);
           setRegistryVersion(cloudSnap.version);
-          const bounds = computeCatalogBounds(cloudSnap.catalog, DEFAULT_FILTERS);
-          setFilters((prev) => ({
-            ...prev,
-            minCarat: Math.min(prev.minCarat, bounds.minCarat),
-            maxCarat: Math.max(prev.maxCarat, bounds.maxCarat),
-            minPrice: Math.min(prev.minPrice, bounds.minPrice),
-            maxPrice: Math.max(prev.maxPrice, bounds.maxPrice),
-          }));
+          if (cloudSnap.catalog.length > 0) {
+            const bounds = computeCatalogBounds(cloudSnap.catalog, DEFAULT_FILTERS);
+            setFilters((prev) => ({
+              ...prev,
+              minCarat: Math.min(prev.minCarat, bounds.minCarat),
+              maxCarat: Math.max(prev.maxCarat, bounds.maxCarat),
+              minPrice: Math.min(prev.minPrice, bounds.minPrice),
+              maxPrice: Math.max(prev.maxPrice, bounds.maxPrice),
+            }));
+          }
           void saveLocalRegistry({
             version: cloudSnap.version,
             catalog: cloudSnap.catalog,
             suppliers: nextSuppliers,
             pricingConfig: localSnap?.pricingConfig || DEFAULT_PRICING_CONFIG,
             savedAt: new Date().toISOString(),
+            clearedExplicitly: cloudSnap.catalog.length === 0,
           });
         }
       } catch (err) {
@@ -504,7 +520,7 @@ export default function App() {
         const cloudAdmin = await loadCloudRegistry({
           includeManagerData: true,
         });
-        if (!active || !cloudAdmin || cloudAdmin.catalog.length === 0) return;
+        if (!active || !cloudAdmin) return;
 
         if (cloudAdmin.version > registryVersion) {
           const nextSup =
@@ -539,6 +555,7 @@ export default function App() {
         suppliers,
         pricingConfig,
         savedAt: new Date().toISOString(),
+        clearedExplicitly: catalog.length === 0,
       });
     }, 250);
     return () => window.clearTimeout(timer);
@@ -633,16 +650,6 @@ export default function App() {
       ),
     [clientCatalog, catalogIndex, filters, deferredSearchQuery, disabledSupplierIds]
   );
-
-  const fancyDiamonds = useMemo(() => {
-    const res: Diamond[] = [];
-    for (let i = 0; i < clientCatalog.length; i++) {
-      if (catalogIndex.fancyFlags[i] === 1) {
-        res.push(clientCatalog[i]);
-      }
-    }
-    return res;
-  }, [clientCatalog, catalogIndex]);
 
   const inspectedDiamond = useMemo(
     () => (inspectedDiamondId ? catalog.find((d) => d.id === inspectedDiamondId) || null : null),
@@ -818,8 +825,12 @@ export default function App() {
     setActiveSection('catalog');
   };
 
-  const handleOpenExcelImport = (targetDir: 'white' | 'fancy') => {
+  const handleOpenExcelImport = (
+    targetDir: 'white' | 'fancy',
+    mode: ExcelImportMode = 'none'
+  ) => {
     setExcelTargetDirectory(targetDir);
+    setExcelImportMode(mode);
     setIsExcelModalOpen(true);
   };
 
@@ -968,6 +979,144 @@ export default function App() {
     }
   };
 
+  const handleClearAssortment = (
+    mode: 'all' | 'ids' | 'restore-demo',
+    stoneIds?: string[]
+  ) => {
+    let nextCatalog: Diamond[] = [];
+    if (mode === 'all') {
+      nextCatalog = [];
+    } else if (mode === 'ids' && stoneIds && stoneIds.length > 0) {
+      const removeSet = new Set(stoneIds);
+      nextCatalog = catalog.filter((d) => !removeSet.has(d.id));
+    } else if (mode === 'restore-demo') {
+      nextCatalog = ALL_INITIAL_DIAMONDS;
+    }
+
+    const nextSuppliers = rebuildSupplierFeeds(
+      nextCatalog,
+      mode === 'all' ? [] : suppliers
+    );
+    const remainingIds = new Set(nextCatalog.map((d) => d.id));
+
+    setCatalog(nextCatalog);
+    setSuppliers(nextSuppliers);
+    setComparedIds((prev) => prev.filter((id) => remainingIds.has(id)));
+    setCartIds((prev) => prev.filter((id) => remainingIds.has(id)));
+    if (inspectedDiamondId && !remainingIds.has(inspectedDiamondId)) {
+      setInspectedDiamondId(null);
+    }
+    setPairAnchorId(nextCatalog[0]?.id ?? null);
+
+    if (nextCatalog.length > 0) {
+      expandFilterBoundsForDiamonds(nextCatalog, true);
+    } else {
+      setFilters(DEFAULT_FILTERS);
+    }
+
+    void saveLocalRegistry({
+      version: registryVersion,
+      catalog: nextCatalog,
+      suppliers: nextSuppliers,
+      pricingConfig,
+      savedAt: new Date().toISOString(),
+      clearedExplicitly: nextCatalog.length === 0,
+    });
+
+    if (isAdminSignedIn) {
+      void handlePublishToCloud({
+        catalog: nextCatalog,
+        suppliers: nextSuppliers,
+        pricingConfig,
+      });
+    }
+  };
+
+  const handleBulkUpdateAssortment = (
+    stoneIds: string[] | null,
+    patch: BulkAssortmentPatch
+  ) => {
+    const idSet = stoneIds ? new Set(stoneIds) : null;
+    const cleanSupplier = patch.supplierName?.trim();
+    const customSupplierId = cleanSupplier
+      ? `sup-${cleanSupplier
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+          .slice(0, 24) || 'custom'}-${Date.now().toString(36).slice(-4)}`
+      : undefined;
+    const existingMatchedSupplier = cleanSupplier
+      ? suppliers.find(
+          (s) => s.name.trim().toLowerCase() === cleanSupplier.toLowerCase()
+        )
+      : undefined;
+    const resolvedSupId = existingMatchedSupplier?.id || customSupplierId;
+
+    const nextCatalog = catalog.map((stone) => {
+      if (idSet !== null && !idSet.has(stone.id)) return stone;
+      let next: Diamond = { ...stone };
+
+      if (patch.directory === 'white') {
+        next.directory = 'white';
+        next.isFancyColor = false;
+        next.stoneType = 'Бриллиант';
+        next.colorFamily = 'Бесцветный (D–J)';
+        next.fancyIntensity = undefined;
+      } else if (patch.directory === 'fancy') {
+        next.directory = 'fancy';
+        next.isFancyColor = true;
+        next.stoneType = 'Цветной бриллиант';
+        if (!next.colorFamily || next.colorFamily === 'Бесцветный (D–J)') {
+          next.colorFamily = 'Фантазийный';
+        }
+      }
+
+      if (patch.growthType) {
+        next.growthType = patch.growthType;
+      }
+
+      if (cleanSupplier && resolvedSupId) {
+        next.supplierId = resolvedSupId;
+        next.supplierName = cleanSupplier;
+      }
+
+      if (patch.pricingAction === 'apply' && patch.pricingConfig) {
+        next = applyPricingToDiamond(next, patch.pricingConfig);
+      } else if (patch.pricingAction === 'reset-to-cost') {
+        next = applyPricingToDiamond(next, {
+          mode: 'multiplier',
+          value: 1,
+          roundingStep: 1,
+          applyOnImport: pricingConfig.applyOnImport,
+        });
+      }
+
+      return next;
+    });
+
+    const nextSuppliers = rebuildSupplierFeeds(nextCatalog, suppliers);
+    setCatalog(nextCatalog);
+    setSuppliers(nextSuppliers);
+    expandFilterBoundsForDiamonds(nextCatalog, false);
+
+    void saveLocalRegistry({
+      version: registryVersion,
+      catalog: nextCatalog,
+      suppliers: nextSuppliers,
+      pricingConfig,
+      savedAt: new Date().toISOString(),
+      clearedExplicitly: nextCatalog.length === 0,
+    });
+
+    if (isAdminSignedIn) {
+      void handlePublishToCloud({
+        catalog: nextCatalog,
+        suppliers: nextSuppliers,
+        pricingConfig,
+      });
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-[#FAFAFA] text-[#111317]">
       {/* Strict 3-Zone Top Bar Contract */}
@@ -997,17 +1146,6 @@ export default function App() {
               }`}
             >
               Каталог
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveSection('fancy')}
-              className={`py-1 border-b-2 transition-colors whitespace-nowrap shrink-0 tabular-nums ${
-                activeSection === 'fancy'
-                  ? 'border-[#1B365D] text-[#111317]'
-                  : 'border-transparent hover:text-[#111317]'
-              }`}
-            >
-              Цветные бриллианты
             </button>
             <button
               type="button"
@@ -1081,7 +1219,6 @@ export default function App() {
           {(
             [
               { id: 'catalog', label: 'Каталог' },
-              { id: 'fancy', label: 'Цветные бриллианты' },
               { id: 'pair-finder', label: 'Подбор пары' },
               {
                 id: 'compare',
@@ -1198,8 +1335,9 @@ export default function App() {
                     <div className="font-mono tabular-nums text-lg font-semibold text-[#111317]">
                       {clientCatalog.length.toLocaleString('ru-RU')} камней
                     </div>
-                    <div className="text-xs text-[#5A606D] mt-0.5">
-                      Доступно в живом каталоге
+                    <div className="text-xs text-[#5A606D] mt-0.5 tabular-nums">
+                      Белые: {catalogIndex.whiteCount.toLocaleString('ru-RU')} · Цветные:{' '}
+                      {catalogIndex.fancyCount.toLocaleString('ru-RU')}
                     </div>
                   </div>
                   <div>
@@ -1252,8 +1390,9 @@ export default function App() {
               diamonds={filteredCatalog}
               catalog={clientCatalog}
               totalCount={clientCatalog.length}
+              whiteCount={catalogIndex.whiteCount}
               fancyCount={catalogIndex.fancyCount}
-              onGoToFancy={() => setActiveSection('fancy')}
+              onGoToManager={() => setActiveSection('manager')}
               filters={filters}
               onChangeFilters={setFilters}
               onResetFilters={handleResetFilters}
@@ -1305,12 +1444,14 @@ export default function App() {
                   onUpdateDiamond={handleUpdateDiamond}
                   onAddDiamond={handleAddDiamond}
                   onDeleteDiamond={handleDeleteDiamond}
+                  onBulkUpdateAssortment={handleBulkUpdateAssortment}
+                  onClearAssortment={handleClearAssortment}
                   onToggleSupplierActive={handleToggleSupplierActive}
                   onDeleteSupplier={handleDeleteSupplier}
                   onPublishToCloud={() => void handlePublishToCloud()}
                   onRequestGoogleLogin={handleGoogleCloudLogin}
                   onRequestGoogleRedirectLogin={handleGoogleCloudRedirectLogin}
-                  onOpenExcelImport={() => handleOpenExcelImport('white')}
+                  onOpenExcelImport={(mode) => handleOpenExcelImport('white', mode)}
                   onLockCabinet={() => {
                     setIsManagerUnlocked(false);
                     setActiveSection('catalog');
@@ -1326,43 +1467,6 @@ export default function App() {
             ))}
 
           <Suspense fallback={<SectionFallback />}>
-            {activeSection === 'fancy' && (
-              <>
-                {importBanner && (
-                  <div className="max-w-7xl mx-auto px-6 pt-6">
-                    <div className="p-3.5 rounded-lg bg-[#ECFDF5] border border-[#A7F3D0] text-xs text-[#065F46] flex items-center justify-between gap-3">
-                      <span>{importBanner}</span>
-                      <button
-                        type="button"
-                        onClick={() => setImportBanner(null)}
-                        aria-label="Скрыть уведомление"
-                        className="text-[#065F46] hover:text-[#043927]"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                )}
-                <FancyDiamondsView
-                  diamonds={fancyDiamonds}
-                  comparedIds={comparedIds}
-                  cartIds={cartIds}
-                  watchedDiamondIds={watchedDiamondIds}
-                  onInspect={handleInspect}
-                  onToggleCompare={handleToggleCompare}
-                  onToggleCart={handleToggleCart}
-                  onFindPair={handleFindPair}
-                  onToggleWatch={handleToggleWatchDiamond}
-                  onGoToPairFinder={() => {
-                    const firstFancy = fancyDiamonds[0];
-                    if (firstFancy) setPairAnchorId(firstFancy.id);
-                    setActiveSection('pair-finder');
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                  }}
-                />
-              </>
-            )}
-
             {activeSection === 'pair-finder' && (
               <PairFinderView
                 catalog={clientCatalog}
@@ -1422,9 +1526,8 @@ export default function App() {
         </SectionErrorBoundary>
       </main>
 
-      {/* Compact Comparison Tray on Catalog & Fancy Views */}
-      {(activeSection === 'catalog' || activeSection === 'fancy') &&
-        comparedIds.length > 0 && (
+      {/* Compact Comparison Tray on Catalog View */}
+      {activeSection === 'catalog' && comparedIds.length > 0 && (
         <div className="sticky bottom-4 z-30 max-w-2xl mx-auto px-4 w-full pointer-events-none">
           <div className="pointer-events-auto bg-[#111317] text-white rounded-xl px-4 py-2.5 shadow-xl flex items-center justify-between gap-4 border border-white/10">
             <div className="flex items-center gap-2.5 text-xs min-w-0">
@@ -1473,13 +1576,6 @@ export default function App() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveSection('fancy')}
-              className="hover:text-[#111317] transition-colors"
-            >
-              Цветные бриллианты
-            </button>
-            <button
-              type="button"
               onClick={() => setActiveSection('pair-finder')}
               className="hover:text-[#111317] transition-colors"
             >
@@ -1522,6 +1618,7 @@ export default function App() {
         <ExcelImportModal
           open={isExcelModalOpen}
           defaultTargetDirectory={excelTargetDirectory}
+          defaultImportMode={excelImportMode}
           pricingConfig={pricingConfig}
           existingSuppliers={suppliers}
           onClose={() => setIsExcelModalOpen(false)}

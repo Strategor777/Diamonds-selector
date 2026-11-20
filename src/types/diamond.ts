@@ -9,6 +9,19 @@ export type DiamondShape =
   | 'Marquise'
   | 'Heart'
   | 'Asscher'
+  | 'Old Mine'
+  | 'Old European'
+  | 'Antique Cushion'
+  | 'Rose Cut'
+  | 'Moval'
+  | 'Shield'
+  | 'Kite'
+  | 'Hexagon'
+  | 'Lozenge'
+  | 'Half Moon'
+  | 'Trapezoid'
+  | 'Cadillac'
+  | 'Briolette'
   | 'Trilliant'
   | 'Baguette'
   | 'Octagon'
@@ -103,7 +116,10 @@ export interface Diamond {
   colorDistribution?: string;
 }
 
+export type ColorCategoryFilter = 'all' | 'white' | 'fancy';
+
 export interface DiamondFilters {
+  colorCategory: ColorCategoryFilter;
   shapes: DiamondShape[];
   colors: DiamondColor[];
   colorFamilies: string[];
@@ -189,7 +205,6 @@ export interface MatchedPairCandidate {
 
 export type AppSection =
   | 'catalog'
-  | 'fancy'
   | 'pair-finder'
   | 'compare'
   | 'cart'

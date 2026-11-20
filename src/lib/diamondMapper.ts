@@ -329,8 +329,21 @@ const SHAPE_TOKENS = new Set([
   'marquise', 'mq', 'mar', 'маркиз',
   'heart', 'hs', 'сердце',
   'asscher', 'as', 'ашер',
+  'old mine', 'omc', 'old miner', 'олд майн',
+  'old european', 'oec', 'old euro', 'староевропейская',
+  'antique cushion', 'античный кушон',
+  'rose cut', 'rose', 'роза',
+  'moval', 'мовал',
+  'shield', 'sh', 'щит',
+  'kite', 'kt', 'кайт',
+  'hexagon', 'hex', 'гексагон', 'шестиугольник',
+  'lozenge', 'lz', 'ромб',
+  'half moon', 'halfmoon', 'hm', 'полумесяц',
+  'trapezoid', 'trap', 'tp', 'трапеция',
+  'cadillac', 'cad', 'кадиллак',
+  'briolette', 'brio', 'бриолет',
   'trilliant', 'trillion', 'tr', 'триллион', 'треугольник',
-  'baguette', 'bg', 'багет',
+  'baguette', 'bg', 'tb', 'tapered baguette', 'багет',
   'octagon', 'oc', 'октагон',
   'cabochon', 'cb', 'кабошон',
 ]);
@@ -566,7 +579,10 @@ export function normalizeShape(val: string | undefined): DiamondShape {
     триллион: 'Trilliant',
     треугольник: 'Trilliant',
     baguette: 'Baguette',
+    'tapered baguette': 'Baguette',
+    'straight baguette': 'Baguette',
     bg: 'Baguette',
+    tb: 'Baguette',
     багет: 'Baguette',
     octagon: 'Octagon',
     oc: 'Octagon',
@@ -574,8 +590,70 @@ export function normalizeShape(val: string | undefined): DiamondShape {
     cabochon: 'Cabochon',
     cb: 'Cabochon',
     кабошон: 'Cabochon',
+    'old mine': 'Old Mine',
+    'old mine cut': 'Old Mine',
+    'old miner': 'Old Mine',
+    omc: 'Old Mine',
+    'олд майн': 'Old Mine',
+    'старая шахта': 'Old Mine',
+    'old european': 'Old European',
+    'old european cut': 'Old European',
+    'old euro': 'Old European',
+    oec: 'Old European',
+    euro: 'Old European',
+    староевропейская: 'Old European',
+    'antique cushion': 'Antique Cushion',
+    'omc cushion': 'Antique Cushion',
+    'античный кушон': 'Antique Cushion',
+    'rose cut': 'Rose Cut',
+    rose: 'Rose Cut',
+    роза: 'Rose Cut',
+    moval: 'Moval',
+    мовал: 'Moval',
+    shield: 'Shield',
+    sh: 'Shield',
+    щит: 'Shield',
+    kite: 'Kite',
+    kt: 'Kite',
+    кайт: 'Kite',
+    hexagon: 'Hexagon',
+    hex: 'Hexagon',
+    гексагон: 'Hexagon',
+    шестиугольник: 'Hexagon',
+    lozenge: 'Lozenge',
+    lz: 'Lozenge',
+    ромб: 'Lozenge',
+    'half moon': 'Half Moon',
+    halfmoon: 'Half Moon',
+    hm: 'Half Moon',
+    полумесяц: 'Half Moon',
+    trapezoid: 'Trapezoid',
+    trap: 'Trapezoid',
+    tp: 'Trapezoid',
+    трапеция: 'Trapezoid',
+    cadillac: 'Cadillac',
+    cad: 'Cadillac',
+    кадиллак: 'Cadillac',
+    briolette: 'Briolette',
+    brio: 'Briolette',
+    бриолет: 'Briolette',
   };
   if (map[v]) return map[v];
+  // Check antique/specialty multi-word patterns BEFORE generic cushion/round/oval matching
+  if (v.includes('old mine') || v.includes('omc') || v.includes('олд майн') || v.includes('старая шахт')) return 'Old Mine';
+  if (v.includes('old euro') || v.includes('oec') || v.includes('староевроп')) return 'Old European';
+  if (v.includes('antique') && (v.includes('cushion') || v.includes('кушон'))) return 'Antique Cushion';
+  if (v.includes('антич') && v.includes('кушон')) return 'Antique Cushion';
+  if (v.includes('rose cut') || v === 'rose' || v.includes('огранка роза')) return 'Rose Cut';
+  if (v.includes('moval') || v.includes('мовал')) return 'Moval';
+  if (v.includes('shield') || v.includes('щит')) return 'Shield';
+  if (v.includes('kite') || v.includes('кайт')) return 'Kite';
+  if (v.includes('hex') || v.includes('гексаг') || v.includes('шестиугол')) return 'Hexagon';
+  if (v.includes('lozenge') || v.includes('ромб')) return 'Lozenge';
+  if (v.includes('half moon') || v.includes('halfmoon') || v.includes('полумесяц')) return 'Half Moon';
+  if (v.includes('trapez') || v.includes('трапец')) return 'Trapezoid';
+  if (v.includes('cadillac') || v.includes('кадиллак')) return 'Cadillac';
+  if (v.includes('briolette') || v.includes('бриолет')) return 'Briolette';
   const found = ALL_SHAPES.find((s) => v.includes(s.toLowerCase()));
   if (found) return found;
   if (v.includes('круг')) return 'Round';

@@ -197,9 +197,15 @@ export function filterAndSortCatalog(
     !hasCertLabs && filters.certLab !== 'ALL' ? filters.certLab.toUpperCase() : null;
 
   const isWhiteDirOnly =
-    filters.stoneTypes.length === 1 && filters.stoneTypes[0] === 'Бриллиант';
+    filters.colorCategory === 'white' ||
+    (filters.colorCategory === 'all' &&
+      filters.stoneTypes.length === 1 &&
+      filters.stoneTypes[0] === 'Бриллиант');
   const isFancyDirOnly =
-    filters.stoneTypes.length === 1 && filters.stoneTypes[0] === 'Цветной бриллиант';
+    filters.colorCategory === 'fancy' ||
+    (filters.colorCategory === 'all' &&
+      filters.stoneTypes.length === 1 &&
+      filters.stoneTypes[0] === 'Цветной бриллиант');
 
   const stoneTypeSet = hasStoneTypes ? new Set(filters.stoneTypes) : null;
   const colorFamilySet = hasColorFamilies ? new Set(filters.colorFamilies) : null;
@@ -281,8 +287,6 @@ export function filterAndSortCatalog(
 
     if (isWhiteDirOnly) {
       if (fancyFlags[i] === 1) return;
-      const st = d.stoneType || 'Бриллиант';
-      if (st !== 'Бриллиант') return;
     } else if (isFancyDirOnly) {
       if (fancyFlags[i] !== 1) return;
     } else if (stoneTypeSet) {

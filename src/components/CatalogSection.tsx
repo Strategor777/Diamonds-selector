@@ -13,15 +13,18 @@ import {
   ALL_COLORS,
   ALL_FANCY_CLARITIES,
   ALL_FANCY_SHADES,
-  ALL_SHAPES,
+  ANTIQUE_SHAPES,
   FANCY_INTENSITIES,
   SHAPE_SHORT_RU,
+  SPECIALTY_SHAPES,
+  STANDARD_SHAPES,
   extractFancyIntensity,
   formatStonePrice,
   getColorHexTint,
 } from '../data/diamonds';
 import { isFancyDiamond } from '../lib/catalogEngine';
 import {
+  ColorCategoryFilter,
   CutGrade,
   Diamond,
   DiamondClarity,
@@ -43,8 +46,9 @@ interface CatalogSectionProps {
   diamonds: Diamond[];
   catalog: Diamond[];
   totalCount: number;
+  whiteCount?: number;
   fancyCount?: number;
-  onGoToFancy?: () => void;
+  onGoToManager?: () => void;
   filters: DiamondFilters;
   onChangeFilters: React.Dispatch<React.SetStateAction<DiamondFilters>>;
   onResetFilters: () => void;
@@ -103,8 +107,9 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
   diamonds,
   catalog,
   totalCount,
+  whiteCount = 0,
   fancyCount = 0,
-  onGoToFancy,
+  onGoToManager,
   filters,
   onChangeFilters,
   onResetFilters,
@@ -120,18 +125,18 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(24);
   const [showProportions, setShowProportions] = useState(false);
+  const [showAntiqueShapes, setShowAntiqueShapes] = useState(true);
 
-  // Determine active directory mode (White Diamonds vs Colored Diamonds vs All)
-  const isWhiteDirectoryOnly =
-    filters.stoneTypes.length === 1 && filters.stoneTypes[0] === 'Бриллиант';
-  const isFancyDirectoryOnly =
-    filters.stoneTypes.length === 1 && filters.stoneTypes[0] === 'Цветной бриллиант';
+  // Unified White vs Colored selection mode
+  const isWhiteDirectoryOnly = filters.colorCategory === 'white';
+  const isFancyDirectoryOnly = filters.colorCategory === 'fancy';
 
   // Reset to page 1 when filtered list length or active sorting/filters change
   useEffect(() => {
     setPage(1);
   }, [
     diamonds.length,
+    filters.colorCategory,
     filters.sortBy,
     filters.stoneTypes,
     filters.shapes,
@@ -154,36 +159,7 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
   const comparedSet = useMemo(() => new Set(comparedIds), [comparedIds]);
   const cartSet = useMemo(() => new Set(cartIds), [cartIds]);
 
-  // Extract available directory types from the entire catalog (always ordered with Бриллиант first)
-  const directoryTypes = useMemo(() => {
-    const typeSet = new Set<string>();
-    let hasWhite = false;
-    let hasFancy = false;
-
-    for (let i = 0; i < catalog.length; i++) {
-      const d = catalog[i];
-      if (isFancyDiamond(d)) {
-        hasFancy = true;
-        typeSet.add('Цветной бриллиант');
-      } else {
-        const st = d.stoneType || 'Бриллиант';
-        if (st === 'Бриллиант') hasWhite = true;
-        typeSet.add(st);
-      }
-    }
-
-    const ordered: string[] = [];
-    if (hasWhite || typeSet.has('Бриллиант')) ordered.push('Бриллиант');
-    if (hasFancy || typeSet.has('Цветной бриллиант')) ordered.push('Цветной бриллиант');
-    for (const st of typeSet) {
-      if (st !== 'Бриллиант' && st !== 'Цветной бриллиант') {
-        ordered.push(st);
-      }
-    }
-    return ordered;
-  }, [catalog]);
-
-  // Compute facets strictly scoped to the active directory slice (single O(n) pass for 50k stones)
+  // Compute facets strictly scoped to the active White/Colored slice (single O(n) pass for 100k stones)
   const facets = useMemo(() => {
     const coloredFamilyCounts = new Map<string, number>();
     const fancyIntensityCounts = new Map<string, number>();
@@ -205,7 +181,7 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
       const fancy = isFancyDiamond(d);
 
       if (isWhiteDirectoryOnly) {
-        if (fancy || (d.stoneType || 'Бриллиант') !== 'Бриллиант') continue;
+        if (fancy) continue;
       } else if (isFancyDirectoryOnly) {
         if (!fancy) continue;
       }
@@ -251,14 +227,12 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
       }
     }
 
-    const hasColoredStones = !isWhiteDirectoryOnly && coloredFamilyCounts.size > 0;
+    const hasColoredStones =
+      !isWhiteDirectoryOnly && (coloredFamilyCounts.size > 0 || isFancyDirectoryOnly);
     const extraColorFamilies = Array.from(coloredFamilyCounts.keys()).filter(
       (f) => !(ALL_FANCY_SHADES as readonly string[]).includes(f)
     );
     const orderedColorFamilies = [...ALL_FANCY_SHADES, ...extraColorFamilies];
-    const hasCustomStoneTypes =
-      directoryTypes.length > 1 ||
-      (directoryTypes.length === 1 && directoryTypes[0] !== 'Бриллиант');
 
     const baseClarities = isFancyDirectoryOnly ? ALL_FANCY_CLARITIES : ALL_CLARITIES;
     const extraClarities = isWhiteDirectoryOnly
@@ -285,7 +259,6 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
       availableLabs: Array.from(labsSet),
       shapeCounts,
       hasColoredStones,
-      hasCustomStoneTypes,
       primaryCurrency,
       scopeTotalCount,
       boundMinCarat: Number.isFinite(minCarat)
@@ -299,50 +272,35 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
       boundMaxPrice:
         maxPrice > 0 ? Math.max(95000, Math.ceil(maxPrice / 1000) * 1000) : 95000,
     };
-  }, [catalog, directoryTypes, isWhiteDirectoryOnly, isFancyDirectoryOnly]);
+  }, [catalog, isWhiteDirectoryOnly, isFancyDirectoryOnly]);
 
-  // Select a dedicated directory cleanly (switching strips incompatible characteristics)
-  const handleSelectDirectory = (stoneType: string) => {
+  // Select White / Colored / All category cleanly (strips incompatible color criteria)
+  const handleSelectColorCategory = (category: ColorCategoryFilter) => {
     onChangeFilters((prev) => {
-      const isAlreadyExclusive =
-        prev.stoneTypes.length === 1 && prev.stoneTypes[0] === stoneType;
-
-      if (isAlreadyExclusive) {
+      if (category === 'white') {
         return {
           ...prev,
+          colorCategory: 'white',
           stoneTypes: [],
-          colorFamilies: [],
-          fancyIntensities: [],
-          colors: [],
-        };
-      }
-
-      if (stoneType === 'Бриллиант') {
-        return {
-          ...prev,
-          stoneTypes: ['Бриллиант'],
           colorFamilies: [],
           fancyIntensities: [],
           colors: prev.colors.filter((c) => WHITE_COLOR_SET.has(c.toUpperCase())),
           clarities: prev.clarities.filter((cl) => ALL_CLARITIES.includes(cl)),
         };
       }
-
-      if (stoneType === 'Цветной бриллиант') {
+      if (category === 'fancy') {
         return {
           ...prev,
-          stoneTypes: ['Цветной бриллиант'],
+          colorCategory: 'fancy',
+          stoneTypes: [],
           colorFamilies: prev.colorFamilies.filter((f) => f !== 'Бесцветный (D–J)'),
           colors: prev.colors.filter((c) => !WHITE_COLOR_SET.has(c.toUpperCase())),
         };
       }
-
       return {
         ...prev,
-        stoneTypes: [stoneType],
-        colorFamilies: [],
-        fancyIntensities: [],
-        colors: [],
+        colorCategory: 'all',
+        stoneTypes: [],
       };
     });
   };
@@ -355,6 +313,37 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
         : [...prev.shapes, shape],
     }));
   };
+
+  const toggleShapeGroup = (group: DiamondShape[]) => {
+    onChangeFilters((prev) => {
+      const allSelected = group.every((sh) => prev.shapes.includes(sh));
+      if (allSelected) {
+        const groupSet = new Set<DiamondShape>(group);
+        return {
+          ...prev,
+          shapes: prev.shapes.filter((s) => !groupSet.has(s)),
+        };
+      }
+      return {
+        ...prev,
+        shapes: Array.from(new Set([...prev.shapes, ...group])),
+      };
+    });
+  };
+
+  const allAntiqueSelected = ANTIQUE_SHAPES.every((s) => filters.shapes.includes(s));
+  const allSpecialtySelected = SPECIALTY_SHAPES.every((s) => filters.shapes.includes(s));
+  const selectedAntiqueAndSpecialtyCount =
+    ANTIQUE_SHAPES.filter((s) => filters.shapes.includes(s)).length +
+    SPECIALTY_SHAPES.filter((s) => filters.shapes.includes(s)).length;
+  const availableAntiqueCount = ANTIQUE_SHAPES.reduce(
+    (sum, s) => sum + (facets.shapeCounts.get(s) || 0),
+    0
+  );
+  const availableSpecialtyCount = SPECIALTY_SHAPES.reduce(
+    (sum, s) => sum + (facets.shapeCounts.get(s) || 0),
+    0
+  );
 
   const toggleColorFamily = (family: string) => {
     onChangeFilters((prev) => ({
@@ -480,6 +469,7 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
     (filters.minWidthMm > 0 || filters.maxWidthMm < 50 ? 1 : 0);
 
   const hasActiveFilters =
+    filters.colorCategory !== 'all' ||
     filters.shapes.length > 0 ||
     filters.stoneTypes.length > 0 ||
     filters.colorFamilies.length > 0 ||
@@ -565,77 +555,225 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
           </div>
         </div>
 
-        {/* 1. Top Block: Директория */}
-        {facets.hasCustomStoneTypes && (
-          <div className="space-y-2">
-            <div className="text-xs font-medium text-[#5A606D]">Директория</div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {directoryTypes.map((st) => {
-                const active =
-                  filters.stoneTypes.length === 1 && filters.stoneTypes[0] === st;
+        {/* 1. Primary Unified Selector: Белый / Цветной */}
+        <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[#E4E6EB]">
+          <div className="space-y-1.5">
+            <div className="text-xs font-medium text-[#5A606D]">
+              Категория камней (Белый / Цветной)
+            </div>
+            <div className="inline-flex items-center gap-1 p-1 bg-[#F1F3F5] rounded-lg">
+              {(
+                [
+                  { id: 'all', label: 'Все камни', count: totalCount },
+                  { id: 'white', label: 'Белые (D–J)', count: whiteCount },
+                  { id: 'fancy', label: 'Цветные (Fancy)', count: fancyCount },
+                ] as const
+              ).map((tab) => {
+                const active = filters.colorCategory === tab.id;
                 return (
                   <button
-                    key={st}
+                    key={tab.id}
                     type="button"
-                    onClick={() => handleSelectDirectory(st)}
-                    className={`px-3.5 py-1.5 text-xs font-medium rounded-md border transition-colors whitespace-nowrap ${
+                    onClick={() => handleSelectColorCategory(tab.id)}
+                    className={`px-3.5 py-2 text-xs font-medium rounded-md transition-colors whitespace-nowrap tabular-nums ${
                       active
-                        ? 'bg-[#1B365D] border-[#1B365D] text-white'
-                        : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                        ? 'bg-[#1B365D] text-white shadow-sm'
+                        : 'text-[#5A606D] hover:text-[#111317]'
                     }`}
                   >
-                    {st}
+                    {tab.label}{' '}
+                    <span className={active ? 'text-white/75' : 'text-[#8A919E]'}>
+                      ({tab.count.toLocaleString('ru-RU')})
+                    </span>
                   </button>
                 );
               })}
-              {filters.stoneTypes.length > 0 && (
+            </div>
+          </div>
+
+          <div className="text-xs text-[#5A606D] max-w-md">
+            Единый каталог белых и цветных бриллиантов. Переключите категорию, чтобы
+            выбрать шкалу цвета D–J для белых или оттенок и интенсивность для цветных.
+          </div>
+        </div>
+
+        {/* 2. Форма огранки: Классические + отдельный блок Античные / Специфические */}
+        <div className="space-y-4">
+          <div className="space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-medium text-[#5A606D]">
+                Форма огранки — Классические формы
+              </div>
+              {filters.shapes.length > 0 && (
                 <button
                   type="button"
                   onClick={() =>
-                    onChangeFilters((prev) => ({
-                      ...prev,
-                      stoneTypes: [],
-                      colorFamilies: [],
-                      fancyIntensities: [],
-                      colors: [],
-                    }))
+                    onChangeFilters((prev) => ({ ...prev, shapes: [] }))
                   }
-                  className="px-2.5 py-1.5 text-xs font-medium rounded-md border border-transparent text-[#5A606D] hover:text-[#111317] hover:bg-[#F1F3F5] transition-colors whitespace-nowrap"
+                  className="text-[11px] font-medium text-[#1B365D] hover:underline whitespace-nowrap"
                 >
-                  Все категории
+                  Сбросить формы ({filters.shapes.length})
                 </button>
               )}
             </div>
+            <div className="grid grid-cols-5 sm:grid-cols-10 gap-2">
+              {STANDARD_SHAPES.map((shape) => {
+                const active = filters.shapes.includes(shape);
+                const count = facets.shapeCounts.get(shape) || 0;
+                return (
+                  <button
+                    key={shape}
+                    type="button"
+                    onClick={() => toggleShape(shape)}
+                    className={`flex flex-col items-center justify-center gap-1.5 py-2.5 px-1.5 rounded-lg border transition-colors ${
+                      active
+                        ? 'bg-[#1B365D] border-[#1B365D] text-white'
+                        : count > 0
+                          ? 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                          : 'bg-[#FAFAFA]/60 border-[#E4E6EB]/70 text-[#8A919E] hover:text-[#111317] hover:border-[#BFC6D2]'
+                    }`}
+                  >
+                    <DiamondShapeIcon shape={shape} className="w-6 h-6" filled={active} />
+                    <span className="text-[11px] font-medium whitespace-nowrap">
+                      {SHAPE_SHORT_RU[shape]}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        )}
 
-        {/* 2. Below Directory: Форма огранки (14 Cuts in 2×7 Grid) */}
-        <div className="space-y-2.5">
-          <div className="text-xs font-medium text-[#5A606D]">Форма огранки</div>
-          <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
-            {ALL_SHAPES.map((shape) => {
-              const active = filters.shapes.includes(shape);
-              const count = facets.shapeCounts.get(shape) || 0;
-              return (
+          {/* Dedicated Antique & Specialty Shapes Panel (Dhanlaxmi Export-style) */}
+          <div className="pt-3 border-t border-[#E4E6EB] space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setShowAntiqueShapes((v) => !v)}
+                className="inline-flex items-center gap-2 text-xs font-medium text-[#111317] hover:text-[#1B365D] transition-colors"
+              >
+                <span>Античные и специфические формы</span>
+                <span className="text-[11px] font-mono tabular-nums text-[#5A606D]">
+                  · в наличии {(availableAntiqueCount + availableSpecialtyCount).toLocaleString('ru-RU')}
+                  {selectedAntiqueAndSpecialtyCount > 0
+                    ? ` · выбрано ${selectedAntiqueAndSpecialtyCount}`
+                    : ''}
+                </span>
+                {showAntiqueShapes ? (
+                  <ChevronUp className="w-3.5 h-3.5 text-[#5A606D]" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5 text-[#5A606D]" />
+                )}
+              </button>
+
+              <div className="flex flex-wrap items-center gap-1.5">
                 <button
-                  key={shape}
                   type="button"
-                  onClick={() => toggleShape(shape)}
-                  className={`flex flex-col items-center justify-center gap-1.5 py-2.5 px-2 rounded-lg border transition-colors ${
-                    active
+                  onClick={() => {
+                    setShowAntiqueShapes(true);
+                    toggleShapeGroup(ANTIQUE_SHAPES);
+                  }}
+                  className={`px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors whitespace-nowrap tabular-nums ${
+                    allAntiqueSelected
                       ? 'bg-[#1B365D] border-[#1B365D] text-white'
-                      : count > 0
-                        ? 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
-                        : 'bg-[#FAFAFA]/60 border-[#E4E6EB]/70 text-[#8A919E] hover:text-[#111317] hover:border-[#BFC6D2]'
+                      : 'bg-[#F4F7FB] border-[#CBD5E1] text-[#1B365D] hover:bg-[#E5EDF7]'
                   }`}
                 >
-                  <DiamondShapeIcon shape={shape} className="w-6 h-6" filled={active} />
-                  <span className="text-xs font-medium whitespace-nowrap">
-                    {SHAPE_SHORT_RU[shape]}
-                  </span>
+                  Все античные ({ANTIQUE_SHAPES.length})
                 </button>
-              );
-            })}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAntiqueShapes(true);
+                    toggleShapeGroup(SPECIALTY_SHAPES);
+                  }}
+                  className={`px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors whitespace-nowrap tabular-nums ${
+                    allSpecialtySelected
+                      ? 'bg-[#1B365D] border-[#1B365D] text-white'
+                      : 'bg-[#FAFAFA] border-[#D5D9E0] text-[#111317] hover:border-[#1B365D]'
+                  }`}
+                >
+                  Все специфические ({SPECIALTY_SHAPES.length})
+                </button>
+              </div>
+            </div>
+
+            {showAntiqueShapes && (
+              <div className="space-y-3">
+                {/* Antique Cuts Sub-Row */}
+                <div className="space-y-1.5">
+                  <div className="text-[11px] text-[#5A606D]">
+                    Античные огранки (Old Mine, Old European, Rose Cut и др.)
+                  </div>
+                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                    {ANTIQUE_SHAPES.map((shape) => {
+                      const active = filters.shapes.includes(shape);
+                      const count = facets.shapeCounts.get(shape) || 0;
+                      return (
+                        <button
+                          key={shape}
+                          type="button"
+                          onClick={() => toggleShape(shape)}
+                          className={`flex items-center justify-center gap-2 py-2 px-2.5 rounded-lg border transition-colors ${
+                            active
+                              ? 'bg-[#1B365D] border-[#1B365D] text-white'
+                              : count > 0
+                                ? 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                                : 'bg-[#FAFAFA]/60 border-[#E4E6EB]/70 text-[#8A919E] hover:text-[#111317] hover:border-[#BFC6D2]'
+                          }`}
+                        >
+                          <DiamondShapeIcon
+                            shape={shape}
+                            className="w-5 h-5 shrink-0"
+                            filled={active}
+                          />
+                          <span className="text-[11px] font-medium whitespace-nowrap">
+                            {SHAPE_SHORT_RU[shape]}
+                            {count > 0 ? ` (${count})` : ''}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Specialty / Geometric Cuts Sub-Row */}
+                <div className="space-y-1.5">
+                  <div className="text-[11px] text-[#5A606D]">
+                    Специфические и геометрические формы (Shield, Kite, Hexagon, Half Moon, Trapezoid и др.)
+                  </div>
+                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                    {SPECIALTY_SHAPES.map((shape) => {
+                      const active = filters.shapes.includes(shape);
+                      const count = facets.shapeCounts.get(shape) || 0;
+                      return (
+                        <button
+                          key={shape}
+                          type="button"
+                          onClick={() => toggleShape(shape)}
+                          className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg border transition-colors ${
+                            active
+                              ? 'bg-[#1B365D] border-[#1B365D] text-white'
+                              : count > 0
+                                ? 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                                : 'bg-[#FAFAFA]/60 border-[#E4E6EB]/70 text-[#8A919E] hover:text-[#111317] hover:border-[#BFC6D2]'
+                          }`}
+                        >
+                          <DiamondShapeIcon
+                            shape={shape}
+                            className="w-5 h-5 shrink-0"
+                            filled={active}
+                          />
+                          <span className="text-[11px] font-medium whitespace-nowrap">
+                            {SHAPE_SHORT_RU[shape]}
+                            {count > 0 ? ` (${count})` : ''}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -711,8 +849,8 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
             </div>
           )}
 
-          {/* Fancy Intensity & Fancy Shades — shown ONLY in Colored Diamonds directory */}
-          {isFancyDirectoryOnly && (
+          {/* Fancy Intensity & Fancy Shades — shown in Colored mode or when a colored shade is selected */}
+          {(isFancyDirectoryOnly || filters.colorFamilies.length > 0) && (
             <>
               <div className="space-y-2">
                 <div className="text-xs font-medium text-[#5A606D]">
@@ -1430,22 +1568,22 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
 
       {/* Results Grid (Paginated for 30,000-50,000 stone performance) */}
       <div id="catalog-results-top" className="space-y-6">
-        {totalCount === 0 && fancyCount > 0 ? (
+        {totalCount === 0 ? (
           <div className="bg-white border border-[#E4E6EB] rounded-xl p-12 text-center space-y-3">
             <h3 className="text-xl font-semibold text-[#111317]">
-              Все загруженные камни ({fancyCount.toLocaleString('ru-RU')}) — цветные бриллианты
+              Ассортимент пока пуст
             </h3>
             <p className="text-sm text-[#5A606D] max-w-md mx-auto">
-              Для них выделен специализированный раздел с фильтрами по интенсивности
-              окраски (Faint–Vivid), тону, обертону и флуоресценции.
+              Загрузите прайс-лист поставщика (.xlsx / .csv) или добавьте камни
+              вручную в разделе «Кабинет менеджера».
             </p>
-            {onGoToFancy && (
+            {onGoToManager && (
               <button
                 type="button"
-                onClick={onGoToFancy}
+                onClick={onGoToManager}
                 className="inline-flex items-center gap-1.5 px-5 py-2.5 text-xs font-medium rounded-lg bg-[#1B365D] text-white hover:bg-[#142947] transition-colors"
               >
-                Перейти в раздел «Цветные бриллианты» ({fancyCount.toLocaleString('ru-RU')})
+                Перейти в кабинет менеджера
               </button>
             )}
           </div>

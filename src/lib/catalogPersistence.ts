@@ -1,5 +1,6 @@
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -43,6 +44,7 @@ export interface LocalRegistrySnapshot {
   suppliers: SupplierFeed[];
   pricingConfig: PricingConfig;
   savedAt: string;
+  clearedExplicitly?: boolean;
 }
 
 export interface RegistrySyncProgress {
@@ -100,7 +102,11 @@ export async function loadLocalRegistry(): Promise<LocalRegistrySnapshot | null>
       req.onerror = () => reject(req.error || new Error('IndexedDB read failed'));
     });
     idb.close();
-    if (result && Array.isArray(result.catalog) && result.catalog.length > 0) {
+    if (
+      result &&
+      Array.isArray(result.catalog) &&
+      (result.catalog.length > 0 || result.clearedExplicitly)
+    ) {
       return result;
     }
     return null;
@@ -290,8 +296,9 @@ export async function loadCloudRegistry(
 
   const meta = metaSnap.data();
   const version = Number(meta.version || 0);
+  const totalCount = Number(meta.totalCount ?? 0);
   const shardCount = Number(meta.shardCount || 0);
-  if (version < 1 || shardCount <= 0) {
+  if (version < 1) {
     return null;
   }
 
@@ -301,6 +308,18 @@ export async function loadCloudRegistry(
 
   // If caller already has this exact version cached locally and doesn't need fresh admin overlays
   if (options?.cachedVersion === version && !canReadAdmin) {
+    return null;
+  }
+
+  // Handle intentionally cleared empty cloud registry
+  if (shardCount <= 0 && totalCount === 0) {
+    return {
+      version,
+      catalog: [],
+      suppliers: [],
+    };
+  }
+  if (shardCount <= 0) {
     return null;
   }
 
@@ -436,6 +455,7 @@ export async function publishCloudRegistry(params: {
     suppliers: params.suppliers,
     pricingConfig: params.pricingConfig,
     savedAt: nowIso,
+    clearedExplicitly: params.catalog.length === 0,
   });
   params.onProgress?.({ phase: 'local', completed: 1, total: 1 });
 
@@ -461,7 +481,8 @@ export async function publishCloudRegistry(params: {
     (d) => !d.supplierId || !activeSupplierDisabled.has(d.supplierId)
   );
 
-  const totalShards = Math.max(1, Math.ceil(publicStones.length / SHARD_SIZE));
+  const totalShards =
+    publicStones.length > 0 ? Math.ceil(publicStones.length / SHARD_SIZE) : 0;
   const publicTasks: (() => Promise<void>)[] = [];
   const costTasks: (() => Promise<void>)[] = [];
 
@@ -502,15 +523,19 @@ export async function publishCloudRegistry(params: {
     });
   }
 
-  // Write public storefront shards
-  await runWithConcurrency(publicTasks, CONCURRENT_SHARD_OPS, (completed, total) => {
-    params.onProgress?.({ phase: 'cloud-public', completed, total });
-  });
+  // Write public storefront shards (skip when cleared to 0 stones)
+  if (publicTasks.length > 0) {
+    await runWithConcurrency(publicTasks, CONCURRENT_SHARD_OPS, (completed, total) => {
+      params.onProgress?.({ phase: 'cloud-public', completed, total });
+    });
+  }
 
   // Write private manager wholesale cost shards
-  await runWithConcurrency(costTasks, CONCURRENT_SHARD_OPS, (completed, total) => {
-    params.onProgress?.({ phase: 'cloud-costs', completed, total });
-  });
+  if (costTasks.length > 0) {
+    await runWithConcurrency(costTasks, CONCURRENT_SHARD_OPS, (completed, total) => {
+      params.onProgress?.({ phase: 'cloud-costs', completed, total });
+    });
+  }
 
   // Write pricing config & supplier feed docs
   params.onProgress?.({ phase: 'cloud-meta', completed: 0, total: params.suppliers.length + 2 });
@@ -528,9 +553,11 @@ export async function publishCloudRegistry(params: {
     handleFirestoreError(err, OperationType.WRITE, 'pricing_config/default');
   }
 
+  const activeSupplierIds = new Set<string>();
   for (let i = 0; i < params.suppliers.length; i++) {
     const sup = params.suppliers[i];
     const supId = sanitizeId(sup.id);
+    activeSupplierIds.add(supId);
     try {
       await setDoc(doc(db, 'suppliers', supId), {
         name: sup.name.slice(0, 120),
@@ -550,6 +577,18 @@ export async function publishCloudRegistry(params: {
       completed: i + 1,
       total: params.suppliers.length + 2,
     });
+  }
+
+  // Remove stale supplier documents that were cleared or deleted
+  try {
+    const existingSupSnaps = await getDocs(collection(db, 'suppliers'));
+    for (const snap of existingSupSnaps.docs) {
+      if (!activeSupplierIds.has(snap.id)) {
+        await deleteDoc(doc(db, 'suppliers', snap.id));
+      }
+    }
+  } catch (err) {
+    console.warn('Stale supplier cleanup skipped:', err);
   }
 
   let fancyCount = 0;
@@ -580,7 +619,10 @@ export async function publishCloudRegistry(params: {
   return {
     version: nextVersion,
     cloudSynced: true,
-    message: `Опубликовано в облачную базу (${publicStones.length.toLocaleString('ru-RU')} камней, ${totalShards} блоков).`,
+    message:
+      publicStones.length === 0
+        ? 'Облачный каталог очищен (0 камней).'
+        : `Опубликовано в облачную базу (${publicStones.length.toLocaleString('ru-RU')} камней, ${totalShards} блоков).`,
   };
 }
 
