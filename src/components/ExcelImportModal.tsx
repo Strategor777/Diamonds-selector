@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Building2,
   CheckCircle2,
   Download,
   FileSpreadsheet,
@@ -22,30 +23,68 @@ import {
   downloadSampleXlsx,
   parseExcelBuffer,
 } from '../lib/excelImport';
-import { Diamond, PricingConfig } from '../types/diamond';
+import { Diamond, PricingConfig, SupplierFeed } from '../types/diamond';
 import type {
   SheetSummary,
   WorkerInboundMessage,
   WorkerOutboundMessage,
 } from '../workers/excelImport.worker';
 
+export type ExcelImportMode = 'none' | 'supplier' | 'all';
+
 interface ExcelImportModalProps {
   open: boolean;
   defaultTargetDirectory?: 'white' | 'fancy';
   pricingConfig: PricingConfig;
+  existingSuppliers?: SupplierFeed[];
   onClose: () => void;
   onImport: (
     diamonds: Diamond[],
-    replaceExisting: boolean,
+    importMode: ExcelImportMode,
     fileName: string,
-    targetDirectory: 'white' | 'fancy'
+    targetDirectory: 'white' | 'fancy',
+    supplier: { id: string; name: string }
   ) => void;
+}
+
+function inferSupplierNameFromFile(rawFileName: string): string {
+  const withoutExt = rawFileName.replace(/\.(xlsx|xls|csv)$/i, '');
+  const cleaned = withoutExt
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\d{2,4}[.\-/]\d{1,2}[.\-/]\d{2,4}\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned.slice(0, 60) || 'Поставщик';
+}
+
+function buildSupplierId(name: string, existingSuppliers: SupplierFeed[]): string {
+  const trimmed = name.trim();
+  const matched = existingSuppliers.find(
+    (s) => s.name.trim().toLowerCase() === trimmed.toLowerCase()
+  );
+  if (matched) return matched.id;
+
+  // Deterministic ASCII slug + short hash for Cyrillic/Unicode names
+  const ascii = trimmed
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32);
+
+  let hash = 2166136261;
+  for (let i = 0; i < trimmed.length; i++) {
+    hash ^= trimmed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const suffix = (hash >>> 0).toString(36).slice(0, 6);
+  return ascii ? `sup-${ascii}-${suffix}` : `sup-${suffix}`;
 }
 
 export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   open,
   defaultTargetDirectory = 'white',
   pricingConfig,
+  existingSuppliers = [],
   onClose,
   onImport,
 }) => {
@@ -77,23 +116,33 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   const [estimatedSkippedCount, setEstimatedSkippedCount] = useState(0);
 
   const [showColumnMapper, setShowColumnMapper] = useState(false);
-  const [replaceCatalog, setReplaceCatalog] = useState(false);
+  const [importMode, setImportMode] = useState<ExcelImportMode>('none');
+  const [supplierName, setSupplierName] = useState('');
+  const [selectedSupplierId, setSelectedSupplierId] = useState<string | null>(null);
   const [targetDirectory, setTargetDirectory] = useState<'white' | 'fancy'>(
     defaultTargetDirectory
   );
 
+  const resolvedSupplier = useMemo(() => {
+    const cleanName = supplierName.trim() || (fileName ? inferSupplierNameFromFile(fileName) : 'Поставщик');
+    const id = selectedSupplierId || buildSupplierId(cleanName, existingSuppliers);
+    return { id, name: cleanName };
+  }, [supplierName, selectedSupplierId, fileName, existingSuppliers]);
+
   // Refs to read latest values inside worker callbacks cleanly
   const latestImportParamsRef = useRef({
-    replaceCatalog,
+    importMode,
     fileName,
     targetDirectory,
+    resolvedSupplier,
     onImport,
     onClose,
   });
   latestImportParamsRef.current = {
-    replaceCatalog,
+    importMode,
     fileName,
     targetDirectory,
+    resolvedSupplier,
     onImport,
     onClose,
   };
@@ -125,6 +174,8 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
       const detectedHeaders = sheet.rows[detectedHeader] || [];
 
       setFileName(workbook.fileName);
+      setSupplierName(inferSupplierNameFromFile(workbook.fileName));
+      setSelectedSupplierId(null);
       setSheets(workbook.sheets.map((s) => ({ name: s.name, rowCount: s.rows.length })));
       setSelectedSheetIndex(0);
       setHeaderRowIndex(detectedHeader);
@@ -177,6 +228,8 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
         pendingFileRef.current = null;
         fallbackWorkbookRef.current = null;
         setFileName(msg.fileName);
+        setSupplierName(inferSupplierNameFromFile(msg.fileName));
+        setSelectedSupplierId(null);
         setSheets(msg.sheets);
         setSelectedSheetIndex(msg.sheetIndex);
         setHeaderRowIndex(msg.headerRowIndex);
@@ -212,9 +265,10 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
         if (msg.diamonds.length > 0 && latest.fileName) {
           latest.onImport(
             msg.diamonds,
-            latest.replaceCatalog,
+            latest.importMode,
             latest.fileName,
-            latest.targetDirectory
+            latest.targetDirectory,
+            latest.resolvedSupplier
           );
           setFileName(null);
           setSheets([]);
@@ -263,6 +317,9 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
       defaultStoneType:
         targetDirectory === 'fancy' ? 'Цветной бриллиант' : undefined,
       pricingConfig,
+      supplierId: resolvedSupplier.id,
+      supplierName: resolvedSupplier.name,
+      supplierFileName: fileName,
     };
 
     if (workerRef.current && workerHealthyRef.current && !fallbackWorkbookRef.current) {
@@ -306,7 +363,15 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     setEstimatedValidCount(estValid);
     setEstimatedSkippedCount(estSkipped);
     setTotalDataRows(dataCount);
-  }, [fileName, selectedSheetIndex, headerRowIndex, mapping, targetDirectory, pricingConfig]);
+  }, [
+    fileName,
+    selectedSheetIndex,
+    headerRowIndex,
+    mapping,
+    targetDirectory,
+    pricingConfig,
+    resolvedSupplier,
+  ]);
 
   const detectedSectionSummary = useMemo(() => {
     if (!mapping || !analysis) return [];
@@ -420,6 +485,9 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
       defaultStoneType:
         targetDirectory === 'fancy' ? 'Цветной бриллиант' : undefined,
       pricingConfig,
+      supplierId: resolvedSupplier.id,
+      supplierName: resolvedSupplier.name,
+      supplierFileName: fileName,
     };
 
     if (workerRef.current && workerHealthyRef.current && !fallbackWorkbookRef.current) {
@@ -450,6 +518,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     const headerRow = sheet.rows[headerRowIndex] || [];
     const CHUNK_SIZE = 2500;
     const allDiamonds: Diamond[] = [];
+    const idPrefix = `${resolvedSupplier.id}-`;
 
     for (let start = headerRowIndex + 1; start < sheet.rows.length; start += CHUNK_SIZE) {
       const end = Math.min(sheet.rows.length, start + CHUNK_SIZE);
@@ -457,7 +526,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
       const chunkRes = mapRowsToDiamonds(chunkRows, mapping, 'xlsx', 0, mapOptions);
       for (let j = 0; j < chunkRes.diamonds.length; j++) {
         const item = chunkRes.diamonds[j];
-        item.id = `xlsx-${start + j}-${item.sku}`;
+        item.id = `${idPrefix}${start + j}-${item.sku}`;
         allDiamonds.push(item);
       }
       setMapProgress({
@@ -471,7 +540,13 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     setMapProgress(null);
 
     if (allDiamonds.length > 0) {
-      onImport(allDiamonds, replaceCatalog, fileName, targetDirectory);
+      onImport(
+        allDiamonds,
+        importMode,
+        fileName,
+        targetDirectory,
+        resolvedSupplier
+      );
       setFileName(null);
       setSheets([]);
       setPreviewDiamonds([]);
@@ -518,11 +593,12 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
             <FileSpreadsheet className="w-6 h-6 text-[#1B365D] shrink-0" />
             <div>
               <h2 className="text-2xl font-semibold text-[#111317]">
-                Импорт каталога камней из .xlsx
+                Загрузка прайс-листа в единый реестр
               </h2>
               <p className="text-xs text-[#5A606D]">
-                Поддержка больших прайс-листов (до 50 000+ строк) с автодедупликацией,
-                сортировкой белых и цветных камней и анализом заголовков (.xlsx, .xls, .csv)
+                Поддержка прайсов разных поставщиков (до 100 000+ позиций) с
+                автодедупликацией по сертификатам, единым правилом отбора и
+                автораспределением белых (D–J) и цветных камней
               </p>
             </div>
           </div>
@@ -580,8 +656,9 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                     : 'Перетащите файл .xlsx сюда или нажмите для выбора'}
                 </div>
                 <p className="text-xs text-[#5A606D] mt-1.5 max-w-md mx-auto">
-                  Поддерживаются файлы .xlsx, .xls и .csv объёмом до 50 000 строк. Камни с
-                  цветом D–J автоматически направляются в белые бриллианты, цветные — в
+                  Поддерживаются файлы .xlsx, .xls и .csv объёмом до 100 000+ строк.
+                  Вы можете последовательно добавлять прайсы разных поставщиков в единый
+                  реестр — камни D–J автоматически направляются в белые, цветные — в
                   директорию цветных.
                 </p>
                 {!isParsing && (
@@ -742,49 +819,137 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 </div>
               )}
 
-              {/* Target Directory Selector + Summary & Mode */}
-              <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-[#FAFAFA] border border-[#E4E6EB] rounded-lg">
-                <div className="flex items-center gap-2.5 flex-wrap">
-                  <span className="text-xs font-medium text-[#5A606D]">
-                    Целевая директория:
-                  </span>
-                  <div className="inline-flex items-center gap-1 p-0.5 bg-[#EAECEF] rounded-md">
-                    <button
-                      type="button"
-                      onClick={() => setTargetDirectory('white')}
-                      className={`px-3 py-1 text-xs font-medium rounded transition-colors whitespace-nowrap ${
-                        targetDirectory === 'white'
-                          ? 'bg-white text-[#111317] shadow-sm'
-                          : 'text-[#5A606D] hover:text-[#111317]'
-                      }`}
+              {/* Multi-Supplier Registry Source & Import Mode */}
+              <div className="p-4 bg-[#FAFAFA] border border-[#E4E6EB] rounded-lg space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label
+                      htmlFor="import-supplier-name"
+                      className="flex items-center gap-1.5 text-xs font-medium text-[#111317]"
                     >
-                      Белые бриллианты
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setTargetDirectory('fancy')}
-                      className={`px-3 py-1 text-xs font-medium rounded transition-colors whitespace-nowrap ${
-                        targetDirectory === 'fancy'
-                          ? 'bg-white text-[#111317] shadow-sm'
-                          : 'text-[#5A606D] hover:text-[#111317]'
-                      }`}
-                    >
-                      Цветные бриллианты
-                    </button>
+                      <Building2 className="w-3.5 h-3.5 text-[#1B365D]" />
+                      Поставщик / Источник прайса
+                    </label>
+                    <input
+                      id="import-supplier-name"
+                      type="text"
+                      value={supplierName}
+                      onChange={(e) => {
+                        setSupplierName(e.target.value);
+                        setSelectedSupplierId(null);
+                      }}
+                      placeholder="Например: Dhanlaxmi Export, Antwerp Vault..."
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-[#D5D9E0] rounded-lg text-[#111317] focus:outline-none focus:border-[#1B365D]"
+                    />
+                    {existingSuppliers.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                        <span className="text-[11px] text-[#5A606D] mr-1">
+                          Уже в реестре:
+                        </span>
+                        {existingSuppliers
+                          .filter((s) => s.id !== 'default-atelier')
+                          .slice(0, 6)
+                          .map((sup) => (
+                            <button
+                              key={sup.id}
+                              type="button"
+                              onClick={() => {
+                                setSupplierName(sup.name);
+                                setSelectedSupplierId(sup.id);
+                                setImportMode('supplier');
+                              }}
+                              className={`px-2 py-0.5 text-[11px] rounded border transition-colors ${
+                                resolvedSupplier.id === sup.id
+                                  ? 'bg-[#1B365D] border-[#1B365D] text-white'
+                                  : 'bg-white border-[#D5D9E0] text-[#5A606D] hover:text-[#111317]'
+                              }`}
+                            >
+                              {sup.name} ({sup.stoneCount.toLocaleString('ru-RU')})
+                            </button>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="text-xs font-medium text-[#111317]">
+                      Директория по умолчанию (для неопределённых строк)
+                    </div>
+                    <div className="inline-flex items-center gap-1 p-0.5 bg-[#EAECEF] rounded-md">
+                      <button
+                        type="button"
+                        onClick={() => setTargetDirectory('white')}
+                        className={`px-3 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap ${
+                          targetDirectory === 'white'
+                            ? 'bg-white text-[#111317] shadow-sm'
+                            : 'text-[#5A606D] hover:text-[#111317]'
+                        }`}
+                      >
+                        Белые бриллианты
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTargetDirectory('fancy')}
+                        className={`px-3 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap ${
+                          targetDirectory === 'fancy'
+                            ? 'bg-white text-[#111317] shadow-sm'
+                            : 'text-[#5A606D] hover:text-[#111317]'
+                        }`}
+                      >
+                        Цветные бриллианты
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-[#5A606D]">
+                      Камни с цветом D, E, F… переносятся в «Белые бриллианты» автоматически.
+                    </p>
                   </div>
                 </div>
 
-                <label className="flex items-center gap-2 text-xs text-[#111317] cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={replaceCatalog}
-                    onChange={(e) => setReplaceCatalog(e.target.checked)}
-                    className="accent-[#1B365D] w-4 h-4"
-                  />
-                  {targetDirectory === 'fancy'
-                    ? 'Заменить цветные бриллианты директории (вместо добавления)'
-                    : 'Заменить текущий каталог (вместо добавления)'}
-                </label>
+                {/* 3 Registry Import Modes */}
+                <div className="pt-3 border-t border-[#E4E6EB] space-y-2">
+                  <div className="text-xs font-medium text-[#111317]">
+                    Режим добавления в единый реестр
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    {(
+                      [
+                        {
+                          id: 'none',
+                          title: 'Добавить в единый реестр',
+                          desc: 'Объединить со всеми поставщиками. При совпадении сертификата сохраняется лучшая входная цена.',
+                        },
+                        {
+                          id: 'supplier',
+                          title: 'Обновить прайс поставщика',
+                          desc: `Заменить только позиции «${resolvedSupplier.name}», сохранив остальных поставщиков.`,
+                        },
+                        {
+                          id: 'all',
+                          title: 'Заменить весь реестр',
+                          desc: 'Полностью очистить текущий каталог и загрузить только этот файл.',
+                        },
+                      ] as const
+                    ).map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setImportMode(opt.id)}
+                        className={`text-left p-2.5 rounded-lg border transition-colors ${
+                          importMode === opt.id
+                            ? 'bg-white border-[#1B365D] ring-1 ring-[#1B365D]'
+                            : 'bg-white/70 border-[#E4E6EB] hover:border-[#BFC6D2]'
+                        }`}
+                      >
+                        <div className="text-xs font-semibold text-[#111317]">
+                          {opt.title}
+                        </div>
+                        <div className="text-[11px] text-[#5A606D] mt-0.5 leading-snug">
+                          {opt.desc}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -915,13 +1080,11 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                   <Upload className="w-3.5 h-3.5" />
                   {isMappingAll
                     ? `Загрузка... ${progressPct}%`
-                    : replaceCatalog
-                      ? targetDirectory === 'fancy'
-                        ? `Заменить директорию «Цветные бриллианты» (~${estimatedValidCount.toLocaleString('ru-RU')})`
-                        : `Заменить каталог (~${estimatedValidCount.toLocaleString('ru-RU')})`
-                      : targetDirectory === 'fancy'
-                        ? `Добавить в «Цветные бриллианты» (~${estimatedValidCount.toLocaleString('ru-RU')})`
-                        : `Добавить в каталог (~${estimatedValidCount.toLocaleString('ru-RU')})`}
+                    : importMode === 'all'
+                      ? `Заменить весь реестр (~${estimatedValidCount.toLocaleString('ru-RU')})`
+                      : importMode === 'supplier'
+                        ? `Обновить прайс «${resolvedSupplier.name}» (~${estimatedValidCount.toLocaleString('ru-RU')})`
+                        : `Добавить в реестр «${resolvedSupplier.name}» (~${estimatedValidCount.toLocaleString('ru-RU')})`}
                 </button>
               </div>
             </div>

@@ -1,5 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ChevronDown,
+  ChevronUp,
+  FileCheck2,
+  PlayCircle,
   RotateCcw,
   Search,
   SlidersHorizontal,
@@ -18,11 +22,15 @@ import {
 } from '../data/diamonds';
 import { isFancyDiamond } from '../lib/catalogEngine';
 import {
+  CutGrade,
   Diamond,
   DiamondClarity,
   DiamondColor,
   DiamondFilters,
   DiamondShape,
+  FluorescenceGrade,
+  GrowthType,
+  PolishSymmetryGrade,
   PriceCurrency,
 } from '../types/diamond';
 import { DiamondCard } from './DiamondCard';
@@ -52,6 +60,45 @@ interface CatalogSectionProps {
 
 const WHITE_COLOR_SET = new Set<string>(ALL_COLORS);
 
+const CARAT_BRACKETS: { label: string; min: number; max: number }[] = [
+  { label: '0.30–0.49', min: 0.3, max: 0.49 },
+  { label: '0.50–0.69', min: 0.5, max: 0.69 },
+  { label: '0.70–0.89', min: 0.7, max: 0.89 },
+  { label: '0.90–0.99', min: 0.9, max: 0.99 },
+  { label: '1.00–1.49', min: 1.0, max: 1.49 },
+  { label: '1.50–1.99', min: 1.5, max: 1.99 },
+  { label: '2.00–2.99', min: 2.0, max: 2.99 },
+  { label: '3.00+', min: 3.0, max: 99 },
+];
+
+const CUT_OPTIONS: { value: CutGrade; short: string }[] = [
+  { value: 'Ideal', short: 'ID' },
+  { value: 'Excellent', short: 'EX' },
+  { value: 'Very Good', short: 'VG' },
+  { value: 'Good', short: 'GD' },
+];
+
+const POLISH_SYM_OPTIONS: { value: PolishSymmetryGrade; short: string }[] = [
+  { value: 'Excellent', short: 'EX' },
+  { value: 'Very Good', short: 'VG' },
+  { value: 'Good', short: 'GD' },
+];
+
+const FLUORESCENCE_OPTIONS: { value: FluorescenceGrade; label: string }[] = [
+  { value: 'None', label: 'None' },
+  { value: 'Faint', label: 'Faint' },
+  { value: 'Medium', label: 'Medium' },
+  { value: 'Strong', label: 'Strong' },
+];
+
+const GROWTH_OPTIONS: { value: GrowthType; label: string }[] = [
+  { value: 'Natural', label: 'Природные' },
+  { value: 'CVD', label: 'CVD' },
+  { value: 'HPHT', label: 'HPHT' },
+];
+
+const BASE_LABS = ['GIA', 'IGI', 'HRD', 'GRS', 'SSEF', 'Gubelin'];
+
 export const CatalogSection: React.FC<CatalogSectionProps> = ({
   diamonds,
   catalog,
@@ -72,6 +119,7 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
 }) => {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(24);
+  const [showProportions, setShowProportions] = useState(false);
 
   // Determine active directory mode (White Diamonds vs Colored Diamonds vs All)
   const isWhiteDirectoryOnly =
@@ -91,6 +139,14 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
     filters.colorFamilies,
     filters.fancyIntensities,
     filters.clarities,
+    filters.cuts,
+    filters.polishes,
+    filters.symmetries,
+    filters.fluorescences,
+    filters.certLabs,
+    filters.growthTypes,
+    filters.onlyWithVideo,
+    filters.onlyWithCert,
     filters.certLab,
     filters.searchQuery,
   ]);
@@ -133,7 +189,7 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
     const fancyIntensityCounts = new Map<string, number>();
     const fancyColorsSet = new Set<string>();
     const claritiesSet = new Set<string>();
-    const labsSet = new Set<string>(['GIA', 'IGI', 'HRD']);
+    const labsSet = new Set<string>(BASE_LABS);
     const shapeCounts = new Map<DiamondShape, number>();
 
     let minCarat = Infinity;
@@ -226,7 +282,7 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
       fancyIntensityCounts,
       fancyColors: Array.from(fancyColorsSet),
       availableClarities,
-      availableLabs: ['ALL', ...Array.from(labsSet)],
+      availableLabs: Array.from(labsSet),
       shapeCounts,
       hasColoredStones,
       hasCustomStoneTypes,
@@ -336,6 +392,93 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
     }));
   };
 
+  const toggleCut = (cut: CutGrade) => {
+    onChangeFilters((prev) => ({
+      ...prev,
+      cuts: prev.cuts.includes(cut)
+        ? prev.cuts.filter((c) => c !== cut)
+        : [...prev.cuts, cut],
+    }));
+  };
+
+  const togglePolish = (polish: PolishSymmetryGrade) => {
+    onChangeFilters((prev) => ({
+      ...prev,
+      polishes: prev.polishes.includes(polish)
+        ? prev.polishes.filter((p) => p !== polish)
+        : [...prev.polishes, polish],
+    }));
+  };
+
+  const toggleSymmetry = (symmetry: PolishSymmetryGrade) => {
+    onChangeFilters((prev) => ({
+      ...prev,
+      symmetries: prev.symmetries.includes(symmetry)
+        ? prev.symmetries.filter((s) => s !== symmetry)
+        : [...prev.symmetries, symmetry],
+    }));
+  };
+
+  const is3ExActive =
+    filters.cuts.length === 1 &&
+    filters.cuts[0] === 'Excellent' &&
+    filters.polishes.length === 1 &&
+    filters.polishes[0] === 'Excellent' &&
+    filters.symmetries.length === 1 &&
+    filters.symmetries[0] === 'Excellent';
+
+  const toggle3ExPreset = () => {
+    onChangeFilters((prev) => {
+      if (is3ExActive) {
+        return { ...prev, cuts: [], polishes: [], symmetries: [] };
+      }
+      return {
+        ...prev,
+        cuts: ['Excellent'],
+        polishes: ['Excellent'],
+        symmetries: ['Excellent'],
+      };
+    });
+  };
+
+  const toggleFluorescence = (fl: FluorescenceGrade) => {
+    onChangeFilters((prev) => ({
+      ...prev,
+      fluorescences: prev.fluorescences.includes(fl)
+        ? prev.fluorescences.filter((item) => item !== fl)
+        : [...prev.fluorescences, fl],
+    }));
+  };
+
+  const toggleGrowthType = (gt: GrowthType) => {
+    onChangeFilters((prev) => ({
+      ...prev,
+      growthTypes: prev.growthTypes.includes(gt)
+        ? prev.growthTypes.filter((item) => item !== gt)
+        : [...prev.growthTypes, gt],
+    }));
+  };
+
+  const toggleCertLab = (lab: string) => {
+    onChangeFilters((prev) => {
+      const next = prev.certLabs.includes(lab)
+        ? prev.certLabs.filter((l) => l !== lab)
+        : [...prev.certLabs, lab];
+      return {
+        ...prev,
+        certLabs: next,
+        certLab: 'ALL',
+      };
+    });
+  };
+
+  const activeProportionsCount =
+    (filters.minDepthPercent > 0 || filters.maxDepthPercent < 100 ? 1 : 0) +
+    (filters.minTablePercent > 0 || filters.maxTablePercent < 100 ? 1 : 0) +
+    (filters.minLwRatio > 0 || filters.maxLwRatio < 5 ? 1 : 0) +
+    (filters.minLengthMm > 0 || filters.maxLengthMm < 50 ? 1 : 0) +
+    (filters.minWidthMm > 0 || filters.maxWidthMm < 50 ? 1 : 0);
+
   const hasActiveFilters =
     filters.shapes.length > 0 ||
     filters.stoneTypes.length > 0 ||
@@ -343,6 +486,15 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
     filters.fancyIntensities.length > 0 ||
     filters.colors.length > 0 ||
     filters.clarities.length > 0 ||
+    filters.cuts.length > 0 ||
+    filters.polishes.length > 0 ||
+    filters.symmetries.length > 0 ||
+    filters.fluorescences.length > 0 ||
+    filters.certLabs.length > 0 ||
+    filters.growthTypes.length > 0 ||
+    filters.onlyWithVideo ||
+    filters.onlyWithCert ||
+    activeProportionsCount > 0 ||
     filters.minCarat > facets.boundMinCarat + 0.25 ||
     filters.maxCarat < facets.boundMaxCarat - 0.5 ||
     filters.minPrice > facets.boundMinPrice ||
@@ -707,6 +859,43 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
               ariaLabelMin="Нижняя граница каратности"
               ariaLabelMax="Верхняя граница каратности"
             />
+            {/* Quick Carat Size Brackets (Dhanlaxmi Export standard ranges) */}
+            <div className="flex flex-wrap items-center gap-1 pt-0.5">
+              {CARAT_BRACKETS.map((b) => {
+                const effectiveMax = b.max === 99 ? sliderMaxCarat : b.max;
+                const active =
+                  Math.abs(filters.minCarat - b.min) < 0.015 &&
+                  Math.abs(filters.maxCarat - effectiveMax) < 0.05;
+                return (
+                  <button
+                    key={b.label}
+                    type="button"
+                    onClick={() =>
+                      onChangeFilters((prev) =>
+                        active
+                          ? {
+                              ...prev,
+                              minCarat: facets.boundMinCarat,
+                              maxCarat: facets.boundMaxCarat,
+                            }
+                          : {
+                              ...prev,
+                              minCarat: b.min,
+                              maxCarat: effectiveMax,
+                            }
+                      )
+                    }
+                    className={`px-2 py-0.5 text-[11px] font-mono tabular-nums rounded border transition-colors ${
+                      active
+                        ? 'bg-[#1B365D] border-[#1B365D] text-white font-medium'
+                        : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#5A606D] hover:border-[#BFC6D2] hover:text-[#111317]'
+                    }`}
+                  >
+                    {b.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Price Range */}
@@ -776,32 +965,438 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
           </div>
         </div>
 
-        {/* Bottom Filter Bar: Lab, Count, Sort */}
+        {/* 6. Unified Institutional Quality Filters (Cut / Polish / Symmetry / 3EX, Fluorescence, Origin, Media) */}
+        <div className="pt-4 border-t border-[#E4E6EB] space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Cut */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-medium text-[#5A606D]">Огранка (Cut)</span>
+                <button
+                  type="button"
+                  onClick={toggle3ExPreset}
+                  className={`px-2 py-0.5 text-[11px] font-mono font-semibold rounded border transition-colors ${
+                    is3ExActive
+                      ? 'bg-[#1B365D] border-[#1B365D] text-white'
+                      : 'bg-[#F4F7FB] border-[#CBD5E1] text-[#1B365D] hover:bg-[#E5EDF7]'
+                  }`}
+                >
+                  3EX
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {CUT_OPTIONS.map((opt) => {
+                  const active = filters.cuts.includes(opt.value);
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => toggleCut(opt.value)}
+                      title={opt.value}
+                      className={`h-8 min-w-[42px] px-2.5 text-xs font-mono rounded-md border transition-colors ${
+                        active
+                          ? 'bg-[#1B365D] border-[#1B365D] text-white font-semibold'
+                          : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                      }`}
+                    >
+                      {opt.short}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Polish */}
+            <div className="space-y-1.5">
+              <div className="text-xs font-medium text-[#5A606D]">
+                Полировка (Polish)
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {POLISH_SYM_OPTIONS.map((opt) => {
+                  const active = filters.polishes.includes(opt.value);
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => togglePolish(opt.value)}
+                      title={opt.value}
+                      className={`h-8 min-w-[42px] px-2.5 text-xs font-mono rounded-md border transition-colors ${
+                        active
+                          ? 'bg-[#1B365D] border-[#1B365D] text-white font-semibold'
+                          : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                      }`}
+                    >
+                      {opt.short}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Symmetry */}
+            <div className="space-y-1.5">
+              <div className="text-xs font-medium text-[#5A606D]">
+                Симметрия (Symmetry)
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {POLISH_SYM_OPTIONS.map((opt) => {
+                  const active = filters.symmetries.includes(opt.value);
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => toggleSymmetry(opt.value)}
+                      title={opt.value}
+                      className={`h-8 min-w-[42px] px-2.5 text-xs font-mono rounded-md border transition-colors ${
+                        active
+                          ? 'bg-[#1B365D] border-[#1B365D] text-white font-semibold'
+                          : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                      }`}
+                    >
+                      {opt.short}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+            {/* Fluorescence */}
+            <div className="space-y-1.5">
+              <div className="text-xs font-medium text-[#5A606D]">
+                Флуоресценция (Fluorescence)
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {FLUORESCENCE_OPTIONS.map((opt) => {
+                  const active = filters.fluorescences.includes(opt.value);
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => toggleFluorescence(opt.value)}
+                      className={`h-8 px-2.5 text-xs rounded-md border transition-colors whitespace-nowrap ${
+                        active
+                          ? 'bg-[#1B365D] border-[#1B365D] text-white font-medium'
+                          : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Growth / Origin Type */}
+            <div className="space-y-1.5">
+              <div className="text-xs font-medium text-[#5A606D]">
+                Происхождение / Тип роста
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {GROWTH_OPTIONS.map((opt) => {
+                  const active = filters.growthTypes.includes(opt.value);
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => toggleGrowthType(opt.value)}
+                      className={`h-8 px-2.5 text-xs rounded-md border transition-colors whitespace-nowrap ${
+                        active
+                          ? 'bg-[#1B365D] border-[#1B365D] text-white font-medium'
+                          : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Media & Verification Switches + Proportions Drawer Toggle */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  onChangeFilters((prev) => ({
+                    ...prev,
+                    onlyWithVideo: !prev.onlyWithVideo,
+                  }))
+                }
+                className={`inline-flex items-center gap-1.5 h-8 px-2.5 text-xs rounded-md border transition-colors whitespace-nowrap ${
+                  filters.onlyWithVideo
+                    ? 'bg-[#1B365D] border-[#1B365D] text-white font-medium'
+                    : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                }`}
+              >
+                <PlayCircle className="w-3.5 h-3.5" />
+                Видео 360°
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  onChangeFilters((prev) => ({
+                    ...prev,
+                    onlyWithCert: !prev.onlyWithCert,
+                  }))
+                }
+                className={`inline-flex items-center gap-1.5 h-8 px-2.5 text-xs rounded-md border transition-colors whitespace-nowrap ${
+                  filters.onlyWithCert
+                    ? 'bg-[#1B365D] border-[#1B365D] text-white font-medium'
+                    : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
+                }`}
+              >
+                <FileCheck2 className="w-3.5 h-3.5" />
+                С сертификатом
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowProportions((v) => !v)}
+                className={`inline-flex items-center gap-1 h-8 px-2.5 text-xs rounded-md border transition-colors whitespace-nowrap ${
+                  showProportions || activeProportionsCount > 0
+                    ? 'bg-[#F4F7FB] border-[#1B365D] text-[#1B365D] font-medium'
+                    : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#5A606D] hover:text-[#111317]'
+                }`}
+              >
+                Пропорции и мм
+                {activeProportionsCount > 0 ? ` (${activeProportionsCount})` : ''}
+                {showProportions ? (
+                  <ChevronUp className="w-3.5 h-3.5" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Collapsible Proportions & Measurements Drawer (Depth %, Table %, L/W Ratio, Length mm, Width mm) */}
+          {showProportions && (
+            <div className="p-4 bg-[#FAFAFA] border border-[#E4E6EB] rounded-lg grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+              <div className="space-y-1">
+                <div className="text-[11px] font-medium text-[#5A606D]">
+                  Глубина (Depth %)
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <NumericInput
+                    min={0}
+                    max={100}
+                    emptyValue={0}
+                    value={filters.minDepthPercent}
+                    onValueChange={(val) =>
+                      onChangeFilters((prev) => ({
+                        ...prev,
+                        minDepthPercent: Math.max(0, Math.min(val, prev.maxDepthPercent)),
+                      }))
+                    }
+                    aria-label="Минимальная глубина %"
+                    className="w-full px-2 py-1 text-xs font-mono tabular-nums bg-white border border-[#D5D9E0] rounded"
+                  />
+                  <NumericInput
+                    min={0}
+                    max={100}
+                    emptyValue={100}
+                    value={filters.maxDepthPercent}
+                    onValueChange={(val) =>
+                      onChangeFilters((prev) => ({
+                        ...prev,
+                        maxDepthPercent: Math.min(100, Math.max(val, prev.minDepthPercent)),
+                      }))
+                    }
+                    aria-label="Максимальная глубина %"
+                    className="w-full px-2 py-1 text-xs font-mono tabular-nums bg-white border border-[#D5D9E0] rounded"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <div className="text-[11px] font-medium text-[#5A606D]">
+                  Площадка (Table %)
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <NumericInput
+                    min={0}
+                    max={100}
+                    emptyValue={0}
+                    value={filters.minTablePercent}
+                    onValueChange={(val) =>
+                      onChangeFilters((prev) => ({
+                        ...prev,
+                        minTablePercent: Math.max(0, Math.min(val, prev.maxTablePercent)),
+                      }))
+                    }
+                    aria-label="Минимальная площадка %"
+                    className="w-full px-2 py-1 text-xs font-mono tabular-nums bg-white border border-[#D5D9E0] rounded"
+                  />
+                  <NumericInput
+                    min={0}
+                    max={100}
+                    emptyValue={100}
+                    value={filters.maxTablePercent}
+                    onValueChange={(val) =>
+                      onChangeFilters((prev) => ({
+                        ...prev,
+                        maxTablePercent: Math.min(100, Math.max(val, prev.minTablePercent)),
+                      }))
+                    }
+                    aria-label="Максимальная площадка %"
+                    className="w-full px-2 py-1 text-xs font-mono tabular-nums bg-white border border-[#D5D9E0] rounded"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <div className="text-[11px] font-medium text-[#5A606D]">
+                  Отношение (L/W Ratio)
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <NumericInput
+                    min={0}
+                    max={5}
+                    emptyValue={0}
+                    value={filters.minLwRatio}
+                    onValueChange={(val) =>
+                      onChangeFilters((prev) => ({
+                        ...prev,
+                        minLwRatio: Math.max(0, Math.min(val, prev.maxLwRatio)),
+                      }))
+                    }
+                    aria-label="Минимальное отношение L/W"
+                    className="w-full px-2 py-1 text-xs font-mono tabular-nums bg-white border border-[#D5D9E0] rounded"
+                  />
+                  <NumericInput
+                    min={0}
+                    max={5}
+                    emptyValue={5}
+                    value={filters.maxLwRatio}
+                    onValueChange={(val) =>
+                      onChangeFilters((prev) => ({
+                        ...prev,
+                        maxLwRatio: Math.min(5, Math.max(val, prev.minLwRatio)),
+                      }))
+                    }
+                    aria-label="Максимальное отношение L/W"
+                    className="w-full px-2 py-1 text-xs font-mono tabular-nums bg-white border border-[#D5D9E0] rounded"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <div className="text-[11px] font-medium text-[#5A606D]">
+                  Длина (мм)
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <NumericInput
+                    min={0}
+                    max={50}
+                    emptyValue={0}
+                    value={filters.minLengthMm}
+                    onValueChange={(val) =>
+                      onChangeFilters((prev) => ({
+                        ...prev,
+                        minLengthMm: Math.max(0, Math.min(val, prev.maxLengthMm)),
+                      }))
+                    }
+                    aria-label="Минимальная длина мм"
+                    className="w-full px-2 py-1 text-xs font-mono tabular-nums bg-white border border-[#D5D9E0] rounded"
+                  />
+                  <NumericInput
+                    min={0}
+                    max={50}
+                    emptyValue={50}
+                    value={filters.maxLengthMm}
+                    onValueChange={(val) =>
+                      onChangeFilters((prev) => ({
+                        ...prev,
+                        maxLengthMm: Math.min(50, Math.max(val, prev.minLengthMm)),
+                      }))
+                    }
+                    aria-label="Максимальная длина мм"
+                    className="w-full px-2 py-1 text-xs font-mono tabular-nums bg-white border border-[#D5D9E0] rounded"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <div className="text-[11px] font-medium text-[#5A606D]">
+                  Ширина (мм)
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <NumericInput
+                    min={0}
+                    max={50}
+                    emptyValue={0}
+                    value={filters.minWidthMm}
+                    onValueChange={(val) =>
+                      onChangeFilters((prev) => ({
+                        ...prev,
+                        minWidthMm: Math.max(0, Math.min(val, prev.maxWidthMm)),
+                      }))
+                    }
+                    aria-label="Минимальная ширина мм"
+                    className="w-full px-2 py-1 text-xs font-mono tabular-nums bg-white border border-[#D5D9E0] rounded"
+                  />
+                  <NumericInput
+                    min={0}
+                    max={50}
+                    emptyValue={50}
+                    value={filters.maxWidthMm}
+                    onValueChange={(val) =>
+                      onChangeFilters((prev) => ({
+                        ...prev,
+                        maxWidthMm: Math.min(50, Math.max(val, prev.minWidthMm)),
+                      }))
+                    }
+                    aria-label="Максимальная ширина мм"
+                    className="w-full px-2 py-1 text-xs font-mono tabular-nums bg-white border border-[#D5D9E0] rounded"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Bottom Filter Bar: Multi-Select Cert Labs, Count, Sort */}
         <div className="pt-4 border-t border-[#E4E6EB] flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-4 flex-wrap">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs text-[#5A606D]">Сертификат:</span>
-              <div className="inline-flex flex-wrap items-center gap-1 p-0.5 bg-[#F1F3F5] rounded-md">
-                {facets.availableLabs.map((lab) => (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-[#5A606D]">Сертификат:</span>
+            <div className="flex flex-wrap items-center gap-1">
+              <button
+                type="button"
+                onClick={() =>
+                  onChangeFilters((prev) => ({
+                    ...prev,
+                    certLabs: [],
+                    certLab: 'ALL',
+                  }))
+                }
+                className={`px-2.5 py-1 text-xs font-medium rounded-md border transition-colors whitespace-nowrap ${
+                  filters.certLabs.length === 0 && filters.certLab === 'ALL'
+                    ? 'bg-[#1B365D] border-[#1B365D] text-white'
+                    : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#5A606D] hover:text-[#111317]'
+                }`}
+              >
+                Все
+              </button>
+              {facets.availableLabs.map((lab) => {
+                const active =
+                  filters.certLabs.includes(lab) ||
+                  (filters.certLabs.length === 0 && filters.certLab === lab);
+                return (
                   <button
                     key={lab}
                     type="button"
-                    onClick={() =>
-                      onChangeFilters((prev) => ({
-                        ...prev,
-                        certLab: lab,
-                      }))
-                    }
-                    className={`px-2.5 py-1 text-xs font-medium rounded transition-colors whitespace-nowrap ${
-                      filters.certLab === lab
-                        ? 'bg-white text-[#111317] shadow-sm'
-                        : 'text-[#5A606D] hover:text-[#111317]'
+                    onClick={() => toggleCertLab(lab)}
+                    className={`px-2.5 py-1 text-xs font-medium rounded-md border transition-colors whitespace-nowrap ${
+                      active
+                        ? 'bg-[#1B365D] border-[#1B365D] text-white'
+                        : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
                     }`}
                   >
-                    {lab === 'ALL' ? 'Все' : lab}
+                    {lab}
                   </button>
-                ))}
-              </div>
+                );
+              })}
             </div>
           </div>
 

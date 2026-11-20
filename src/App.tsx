@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useDeferredValue, useEffect, useMemo, useState } from 'react';
+import React, { Suspense, lazy, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from 'firebase/auth';
 import {
   ArrowRight,
@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { CatalogSection } from './components/CatalogSection';
 import { DiamondDetailModal } from './components/DiamondDetailModal';
-import { ExcelImportModal } from './components/ExcelImportModal';
+import { ExcelImportModal, ExcelImportMode } from './components/ExcelImportModal';
 import { GoogleSignInButton } from './components/GoogleSignInButton';
 import { ManagerCabinetView } from './components/ManagerCabinetView';
 import { ManagerPasswordGate } from './components/ManagerPasswordGate';
@@ -24,13 +24,24 @@ import {
   deduplicateDiamonds,
   filterAndSortCatalog,
   isFancyDiamond,
+  rebuildSupplierFeeds,
 } from './lib/catalogEngine';
+import {
+  RegistrySyncProgress,
+  loadCloudRegistry,
+  loadLocalRegistry,
+  publishCloudRegistry,
+  saveCloudOrder,
+  saveLocalRegistry,
+} from './lib/catalogPersistence';
+import { isVerifiedAdminEmail } from './lib/firebase';
 import {
   AppSection,
   Diamond,
   DiamondFilters,
   OrderRequest,
   PricingConfig,
+  SupplierFeed,
 } from './types/diamond';
 
 // Resilient dynamic import helper that retries once before triggering a safe reload on stale chunks
@@ -189,10 +200,28 @@ const DEFAULT_FILTERS: DiamondFilters = {
   fancyIntensities: [],
   stoneTypes: [],
   clarities: [],
+  cuts: [],
+  polishes: [],
+  symmetries: [],
+  fluorescences: [],
+  certLabs: [],
+  growthTypes: [],
   minCarat: 0.2,
   maxCarat: 6.0,
   minPrice: 0,
   maxPrice: 150000,
+  minDepthPercent: 0,
+  maxDepthPercent: 100,
+  minTablePercent: 0,
+  maxTablePercent: 100,
+  minLwRatio: 0,
+  maxLwRatio: 5,
+  minLengthMm: 0,
+  maxLengthMm: 50,
+  minWidthMm: 0,
+  maxWidthMm: 50,
+  onlyWithVideo: false,
+  onlyWithCert: false,
   certLab: 'ALL',
   onlyPriceDrops: false,
   searchQuery: '',
@@ -202,15 +231,27 @@ const DEFAULT_FILTERS: DiamondFilters = {
 export default function App() {
   const [activeSection, setActiveSection] = useState<AppSection>('catalog');
   const [catalog, setCatalog] = useState<Diamond[]>(ALL_INITIAL_DIAMONDS);
+  const [suppliers, setSuppliers] = useState<SupplierFeed[]>(() =>
+    rebuildSupplierFeeds(ALL_INITIAL_DIAMONDS, [])
+  );
   const [filters, setFilters] = useState<DiamondFilters>(DEFAULT_FILTERS);
   const [pricingConfig, setPricingConfig] = useState<PricingConfig>(
     DEFAULT_PRICING_CONFIG
   );
 
-  // Google Workspace Auth state
+  // Persistent Registry & Cloud Sync state
+  const isHydratedRef = useRef(false);
+  const [registryVersion, setRegistryVersion] = useState(0);
+  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
+  const [syncProgress, setSyncProgress] = useState<RegistrySyncProgress | null>(null);
+  const [cloudStatusMessage, setCloudStatusMessage] = useState<string | null>(null);
+
+  // Google Workspace & Firebase Auth state
   const [user, setUser] = useState<User | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  const isAdminSignedIn = isVerifiedAdminEmail(user?.email, user?.emailVerified);
 
   // Inspector Modal state
   const [inspectedDiamondId, setInspectedDiamondId] = useState<string | null>(null);
@@ -312,6 +353,131 @@ export default function App() {
     };
   }, []);
 
+  // Hydrate persistent catalog from IndexedDB immediately on startup, then check cloud registry
+  useEffect(() => {
+    let active = true;
+
+    const hydrate = async () => {
+      let localVersion = 0;
+      const localSnap = await loadLocalRegistry();
+      if (!active) return;
+
+      if (localSnap && localSnap.catalog.length > 0) {
+        localVersion = localSnap.version || 0;
+        const hydratedSuppliers =
+          localSnap.suppliers && localSnap.suppliers.length > 0
+            ? rebuildSupplierFeeds(localSnap.catalog, localSnap.suppliers)
+            : rebuildSupplierFeeds(localSnap.catalog, []);
+        setCatalog(localSnap.catalog);
+        setSuppliers(hydratedSuppliers);
+        if (localSnap.pricingConfig) {
+          setPricingConfig(localSnap.pricingConfig);
+        }
+        setRegistryVersion(localVersion);
+        const bounds = computeCatalogBounds(localSnap.catalog, DEFAULT_FILTERS);
+        setFilters((prev) => ({
+          ...prev,
+          minCarat: Math.min(prev.minCarat, bounds.minCarat),
+          maxCarat: Math.max(prev.maxCarat, bounds.maxCarat),
+          minPrice: Math.min(prev.minPrice, bounds.minPrice),
+          maxPrice: Math.max(prev.maxPrice, bounds.maxPrice),
+        }));
+      }
+
+      isHydratedRef.current = true;
+
+      try {
+        const cloudSnap = await loadCloudRegistry({
+          includeManagerData: false,
+          cachedVersion: localVersion,
+        });
+        if (!active || !cloudSnap || cloudSnap.catalog.length === 0) return;
+
+        if (cloudSnap.version > localVersion) {
+          const nextSuppliers = rebuildSupplierFeeds(
+            cloudSnap.catalog,
+            localSnap?.suppliers || []
+          );
+          setCatalog(cloudSnap.catalog);
+          setSuppliers(nextSuppliers);
+          setRegistryVersion(cloudSnap.version);
+          const bounds = computeCatalogBounds(cloudSnap.catalog, DEFAULT_FILTERS);
+          setFilters((prev) => ({
+            ...prev,
+            minCarat: Math.min(prev.minCarat, bounds.minCarat),
+            maxCarat: Math.max(prev.maxCarat, bounds.maxCarat),
+            minPrice: Math.min(prev.minPrice, bounds.minPrice),
+            maxPrice: Math.max(prev.maxPrice, bounds.maxPrice),
+          }));
+          void saveLocalRegistry({
+            version: cloudSnap.version,
+            catalog: cloudSnap.catalog,
+            suppliers: nextSuppliers,
+            pricingConfig: localSnap?.pricingConfig || DEFAULT_PRICING_CONFIG,
+            savedAt: new Date().toISOString(),
+          });
+        }
+      } catch (err) {
+        console.warn('Background cloud registry sync skipped:', err);
+      }
+    };
+
+    void hydrate();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // When verified admin unlocks Manager Cabinet, hydrate private wholesale cost shards from cloud if newer
+  useEffect(() => {
+    if (!isAdminSignedIn || !isManagerUnlocked) return;
+    let active = true;
+
+    const loadAdminOverlay = async () => {
+      try {
+        const cloudAdmin = await loadCloudRegistry({
+          includeManagerData: true,
+        });
+        if (!active || !cloudAdmin || cloudAdmin.catalog.length === 0) return;
+
+        if (cloudAdmin.version > registryVersion) {
+          const nextSup =
+            cloudAdmin.suppliers && cloudAdmin.suppliers.length > 0
+              ? rebuildSupplierFeeds(cloudAdmin.catalog, cloudAdmin.suppliers)
+              : rebuildSupplierFeeds(cloudAdmin.catalog, suppliers);
+          setCatalog(cloudAdmin.catalog);
+          setSuppliers(nextSup);
+          if (cloudAdmin.pricingConfig) {
+            setPricingConfig(cloudAdmin.pricingConfig);
+          }
+          setRegistryVersion(cloudAdmin.version);
+        }
+      } catch (err) {
+        console.warn('Admin cloud overlay load skipped:', err);
+      }
+    };
+
+    void loadAdminOverlay();
+    return () => {
+      active = false;
+    };
+  }, [isAdminSignedIn, isManagerUnlocked]);
+
+  // Auto-persist every catalog/supplier/pricing mutation to IndexedDB so reloads never reset data
+  useEffect(() => {
+    if (!isHydratedRef.current) return;
+    const timer = window.setTimeout(() => {
+      void saveLocalRegistry({
+        version: registryVersion,
+        catalog,
+        suppliers,
+        pricingConfig,
+        savedAt: new Date().toISOString(),
+      });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [catalog, suppliers, pricingConfig, registryVersion]);
+
   const handleGoogleLogin = async () => {
     setIsLoggingIn(true);
     try {
@@ -335,24 +501,50 @@ export default function App() {
     setAccessToken(null);
   };
 
-  // Pre-indexed catalog & deferred search for smooth 30,000-50,000 stone performance
+  // Active supplier filtering for client storefront (paused suppliers remain visible in Manager Cabinet)
+  const disabledSupplierIds = useMemo(() => {
+    const set = new Set<string>();
+    for (let i = 0; i < suppliers.length; i++) {
+      if (!suppliers[i].active) set.add(suppliers[i].id);
+    }
+    return set;
+  }, [suppliers]);
+
+  const clientCatalog = useMemo(() => {
+    if (disabledSupplierIds.size === 0) return catalog;
+    return catalog.filter(
+      (d) => !d.supplierId || !disabledSupplierIds.has(d.supplierId)
+    );
+  }, [catalog, disabledSupplierIds]);
+
+  // Pre-indexed catalog & deferred search for smooth 60,000-100,000+ stone performance
   const deferredSearchQuery = useDeferredValue(filters.searchQuery);
-  const catalogIndex = useMemo(() => buildCatalogIndex(catalog), [catalog]);
+  const catalogIndex = useMemo(
+    () => buildCatalogIndex(clientCatalog),
+    [clientCatalog]
+  );
 
   const filteredCatalog = useMemo(
-    () => filterAndSortCatalog(catalog, catalogIndex, filters, deferredSearchQuery),
-    [catalog, catalogIndex, filters, deferredSearchQuery]
+    () =>
+      filterAndSortCatalog(
+        clientCatalog,
+        catalogIndex,
+        filters,
+        deferredSearchQuery,
+        disabledSupplierIds
+      ),
+    [clientCatalog, catalogIndex, filters, deferredSearchQuery, disabledSupplierIds]
   );
 
   const fancyDiamonds = useMemo(() => {
     const res: Diamond[] = [];
-    for (let i = 0; i < catalog.length; i++) {
+    for (let i = 0; i < clientCatalog.length; i++) {
       if (catalogIndex.fancyFlags[i] === 1) {
-        res.push(catalog[i]);
+        res.push(clientCatalog[i]);
       }
     }
     return res;
-  }, [catalog, catalogIndex]);
+  }, [clientCatalog, catalogIndex]);
 
   const inspectedDiamond = useMemo(
     () => (inspectedDiamondId ? catalog.find((d) => d.id === inspectedDiamondId) || null : null),
@@ -362,14 +554,14 @@ export default function App() {
   const comparedDiamonds = useMemo(() => {
     if (comparedIds.length === 0) return [];
     const set = new Set(comparedIds);
-    return catalog.filter((d) => set.has(d.id));
-  }, [catalog, comparedIds]);
+    return clientCatalog.filter((d) => set.has(d.id));
+  }, [clientCatalog, comparedIds]);
 
   const cartDiamonds = useMemo(() => {
     if (cartIds.length === 0) return [];
     const set = new Set(cartIds);
-    return catalog.filter((d) => set.has(d.id));
-  }, [catalog, cartIds]);
+    return clientCatalog.filter((d) => set.has(d.id));
+  }, [clientCatalog, cartIds]);
 
   const watchedDiamondIds = useMemo(() => new Set<string>(), []);
 
@@ -396,6 +588,11 @@ export default function App() {
   const handleSubmitOrder = (order: OrderRequest) => {
     setSubmittedOrders((prev) => [order, ...prev]);
     setCartIds([]);
+    if (user?.emailVerified) {
+      void saveCloudOrder(order).catch((err) => {
+        console.warn('Cloud order save skipped:', err);
+      });
+    }
   };
 
   const handleToggleWatchDiamond = () => {
@@ -465,23 +662,60 @@ export default function App() {
     }
   };
 
+  const handlePublishToCloud = async (override?: {
+    catalog: Diamond[];
+    suppliers: SupplierFeed[];
+    pricingConfig: PricingConfig;
+  }) => {
+    const targetCatalog = override?.catalog ?? catalog;
+    const targetSuppliers = override?.suppliers ?? suppliers;
+    const targetPricing = override?.pricingConfig ?? pricingConfig;
+
+    setIsSyncingCloud(true);
+    setCloudStatusMessage(null);
+    setSyncProgress({ phase: 'local', completed: 0, total: 1 });
+    try {
+      const res = await publishCloudRegistry({
+        catalog: targetCatalog,
+        suppliers: targetSuppliers,
+        pricingConfig: targetPricing,
+        currentVersion: registryVersion,
+        onProgress: setSyncProgress,
+      });
+      setRegistryVersion(res.version);
+      setCloudStatusMessage(res.message);
+    } catch (err: any) {
+      setCloudStatusMessage(
+        err?.message ||
+          'Не удалось опубликовать в облачную базу. Локальная копия сохранена.'
+      );
+    } finally {
+      setIsSyncingCloud(false);
+      setSyncProgress(null);
+    }
+  };
+
   const handleImportFromSheets = (
     imported: Diamond[],
     replaceExisting: boolean
   ) => {
     expandFilterBoundsForDiamonds(imported, replaceExisting);
-    let uniqueCount = imported.length;
-    setCatalog((prev) => {
-      const dedup = deduplicateDiamonds(
-        imported,
-        prev,
-        replaceExisting ? 'all' : 'none'
-      );
-      uniqueCount = dedup.diamonds.length;
-      return dedup.diamonds;
-    });
+    const tagged = imported.map((d) => ({
+      ...d,
+      supplierId: d.supplierId || 'google-sheets',
+      supplierName: d.supplierName || 'Google Таблицы',
+      supplierFileName: d.supplierFileName || 'Google Sheets',
+    }));
+    const dedup = deduplicateDiamonds(
+      tagged,
+      catalog,
+      replaceExisting ? 'all' : 'none'
+    );
+    const nextSuppliers = rebuildSupplierFeeds(dedup.diamonds, suppliers);
+    setCatalog(dedup.diamonds);
+    setSuppliers(nextSuppliers);
     setImportBanner(
-      `Загружено ${imported.length.toLocaleString('ru-RU')} строк из Google Таблиц (уникальных в базе: ${uniqueCount.toLocaleString('ru-RU')}).`
+      `Загружено ${imported.length.toLocaleString('ru-RU')} строк из Google Таблиц (уникальных в едином реестре: ${dedup.diamonds.length.toLocaleString('ru-RU')}).`
     );
     setActiveSection('catalog');
   };
@@ -493,33 +727,54 @@ export default function App() {
 
   const handleImportFromExcel = (
     imported: Diamond[],
-    replaceExisting: boolean,
+    importMode: ExcelImportMode,
     fileName: string,
-    targetDirectory: 'white' | 'fancy'
+    targetDirectory: 'white' | 'fancy',
+    supplier: { id: string; name: string }
   ) => {
-    expandFilterBoundsForDiamonds(imported, replaceExisting);
+    const replaceAll = importMode === 'all';
+    expandFilterBoundsForDiamonds(imported, replaceAll);
 
-    const replaceMode = !replaceExisting
-      ? 'none'
-      : targetDirectory === 'fancy'
-        ? 'fancy'
-        : 'all';
+    const dedup = deduplicateDiamonds(imported, catalog, importMode, supplier.id);
+    const prevWithMeta: SupplierFeed[] = [
+      ...suppliers.filter((s) => s.id !== supplier.id),
+      {
+        id: supplier.id,
+        name: supplier.name,
+        fileName,
+        stoneCount: imported.length,
+        whiteCount: 0,
+        fancyCount: 0,
+        active: true,
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+    const nextSuppliers = rebuildSupplierFeeds(dedup.diamonds, prevWithMeta);
 
-    let stats = { addedCount: imported.length, updatedCount: 0, duplicatesInBatch: 0 };
+    setCatalog(dedup.diamonds);
+    setSuppliers(nextSuppliers);
 
-    setCatalog((prev) => {
-      const dedup = deduplicateDiamonds(imported, prev, replaceMode);
-      stats = {
-        addedCount: dedup.addedCount,
-        updatedCount: dedup.updatedCount,
-        duplicatesInBatch: dedup.duplicatesInBatch,
-      };
-      return dedup.diamonds;
-    });
-
-    if (replaceExisting && imported.length > 0 && targetDirectory === 'white') {
+    if (replaceAll && imported.length > 0 && targetDirectory === 'white') {
       setComparedIds([]);
       setPairAnchorId(imported[0].id);
+    }
+
+    // Persist locally right away so an immediate reload keeps all imported stones
+    void saveLocalRegistry({
+      version: registryVersion,
+      catalog: dedup.diamonds,
+      suppliers: nextSuppliers,
+      pricingConfig,
+      savedAt: new Date().toISOString(),
+    });
+
+    // If verified admin is signed in, automatically publish updated unified registry to cloud
+    if (isAdminSignedIn) {
+      void handlePublishToCloud({
+        catalog: dedup.diamonds,
+        suppliers: nextSuppliers,
+        pricingConfig,
+      });
     }
 
     let importedFancy = 0;
@@ -529,15 +784,47 @@ export default function App() {
     const importedWhite = imported.length - importedFancy;
 
     const dupSuffix =
-      stats.duplicatesInBatch > 0
-        ? ` · объединено дублей: ${stats.duplicatesInBatch.toLocaleString('ru-RU')}`
+      dedup.duplicatesInBatch > 0
+        ? ` · объединено дублей: ${dedup.duplicatesInBatch.toLocaleString('ru-RU')}`
         : '';
+    const modeLabel =
+      importMode === 'all'
+        ? 'Реестр заменён'
+        : importMode === 'supplier'
+          ? `Обновлён прайс поставщика «${supplier.name}»`
+          : `Добавлено в единый реестр («${supplier.name}»)`;
     setImportBanner(
-      `${replaceExisting ? 'Обновлена база' : 'Загружено'} ${imported.length.toLocaleString('ru-RU')} строк из «${fileName}» (белых: ${importedWhite.toLocaleString('ru-RU')}, цветных: ${importedFancy.toLocaleString('ru-RU')}; новых: ${stats.addedCount.toLocaleString('ru-RU')}, обновлено: ${stats.updatedCount.toLocaleString('ru-RU')}${dupSuffix}).`
+      `${modeLabel}: ${imported.length.toLocaleString('ru-RU')} строк из «${fileName}» (белых: ${importedWhite.toLocaleString('ru-RU')}, цветных: ${importedFancy.toLocaleString('ru-RU')}; новых: ${dedup.addedCount.toLocaleString('ru-RU')}, обновлено: ${dedup.updatedCount.toLocaleString('ru-RU')}${dupSuffix}). Всего в базе: ${dedup.diamonds.length.toLocaleString('ru-RU')}.`
     );
   };
 
   // Manager Cabinet Actions
+  const handleToggleSupplierActive = (supplierId: string) => {
+    setSuppliers((prev) =>
+      prev.map((s) => (s.id === supplierId ? { ...s, active: !s.active } : s))
+    );
+  };
+
+  const handleDeleteSupplier = (supplierId: string) => {
+    const nextCatalog = catalog.filter((d) => {
+      const id = d.supplierId || (d.source === 'catalog' ? 'default-atelier' : 'manual');
+      return id !== supplierId;
+    });
+    const remainingIds = new Set(nextCatalog.map((d) => d.id));
+    setCatalog(nextCatalog);
+    setSuppliers((prev) =>
+      rebuildSupplierFeeds(
+        nextCatalog,
+        prev.filter((s) => s.id !== supplierId)
+      )
+    );
+    setComparedIds((prev) => prev.filter((id) => remainingIds.has(id)));
+    setCartIds((prev) => prev.filter((id) => remainingIds.has(id)));
+    if (inspectedDiamondId && !remainingIds.has(inspectedDiamondId)) {
+      setInspectedDiamondId(null);
+    }
+  };
+
   const handleApplyPricingToStones = (
     stoneIds: string[] | null,
     nextConfig: PricingConfig
@@ -560,12 +847,22 @@ export default function App() {
   };
 
   const handleAddDiamond = (created: Diamond) => {
-    setCatalog((prev) => [created, ...prev]);
-    expandFilterBoundsForDiamonds([created], false);
+    const tagged: Diamond = {
+      ...created,
+      supplierId: created.supplierId || 'manual',
+      supplierName: created.supplierName || 'Добавлено вручную',
+      supplierFileName: created.supplierFileName || 'Ручной ввод',
+    };
+    const nextCatalog = [tagged, ...catalog];
+    setCatalog(nextCatalog);
+    setSuppliers((prev) => rebuildSupplierFeeds(nextCatalog, prev));
+    expandFilterBoundsForDiamonds([tagged], false);
   };
 
   const handleDeleteDiamond = (diamondId: string) => {
-    setCatalog((prev) => prev.filter((d) => d.id !== diamondId));
+    const nextCatalog = catalog.filter((d) => d.id !== diamondId);
+    setCatalog(nextCatalog);
+    setSuppliers((prev) => rebuildSupplierFeeds(nextCatalog, prev));
     setComparedIds((prev) => prev.filter((id) => id !== diamondId));
     setCartIds((prev) => prev.filter((id) => id !== diamondId));
     if (inspectedDiamondId === diamondId) {
@@ -663,7 +960,7 @@ export default function App() {
 
           {/* Zone 3: 1 Primary Action (Official Google Sign-In or Account Action) */}
           <div className="flex items-center shrink-0">
-            {accessToken && user ? (
+            {user ? (
               <button
                 type="button"
                 onClick={() => setActiveSection('sheets')}
@@ -780,7 +1077,7 @@ export default function App() {
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 pt-8 mt-8 border-t border-[#E4E6EB] text-sm">
                   <div>
                     <div className="font-mono tabular-nums text-lg font-semibold text-[#111317]">
-                      {catalog.length} камней
+                      {clientCatalog.length.toLocaleString('ru-RU')} камней
                     </div>
                     <div className="text-xs text-[#5A606D] mt-0.5">
                       Доступно в живом каталоге
@@ -834,8 +1131,8 @@ export default function App() {
             {/* Catalog Filters & Cards */}
             <CatalogSection
               diamonds={filteredCatalog}
-              catalog={catalog}
-              totalCount={catalog.length}
+              catalog={clientCatalog}
+              totalCount={clientCatalog.length}
               fancyCount={catalogIndex.fancyCount}
               onGoToFancy={() => setActiveSection('fancy')}
               filters={filters}
@@ -874,13 +1171,22 @@ export default function App() {
                 )}
                 <ManagerCabinetView
                   catalog={catalog}
+                  suppliers={suppliers}
                   pricingConfig={pricingConfig}
                   managerEmail={user?.email ?? null}
+                  isAdminSignedIn={isAdminSignedIn}
+                  isSyncingCloud={isSyncingCloud}
+                  syncProgress={syncProgress}
+                  cloudStatusMessage={cloudStatusMessage}
                   onUpdatePricingConfig={setPricingConfig}
                   onApplyPricingToStones={handleApplyPricingToStones}
                   onUpdateDiamond={handleUpdateDiamond}
                   onAddDiamond={handleAddDiamond}
                   onDeleteDiamond={handleDeleteDiamond}
+                  onToggleSupplierActive={handleToggleSupplierActive}
+                  onDeleteSupplier={handleDeleteSupplier}
+                  onPublishToCloud={() => void handlePublishToCloud()}
+                  onRequestGoogleLogin={() => void handleGoogleLogin()}
                   onOpenExcelImport={() => handleOpenExcelImport('white')}
                   onLockCabinet={() => {
                     setIsManagerUnlocked(false);
@@ -936,7 +1242,7 @@ export default function App() {
 
             {activeSection === 'pair-finder' && (
               <PairFinderView
-                catalog={catalog}
+                catalog={clientCatalog}
                 initialAnchorId={pairAnchorId}
                 comparedIds={comparedIds}
                 onInspect={handleInspect}
@@ -1094,6 +1400,7 @@ export default function App() {
           open={isExcelModalOpen}
           defaultTargetDirectory={excelTargetDirectory}
           pricingConfig={pricingConfig}
+          existingSuppliers={suppliers}
           onClose={() => setIsExcelModalOpen(false)}
           onImport={handleImportFromExcel}
         />

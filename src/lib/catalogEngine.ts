@@ -6,12 +6,22 @@ import {
   Diamond,
   DiamondFilters,
   DiamondShape,
+  SupplierFeed,
 } from '../types/diamond';
 import { isWhiteDiamondColorGrade } from './diamondMapper';
 
 export interface CatalogIndex {
   searchTokens: string[];
   fancyFlags: Uint8Array;
+  hasVideoFlags: Uint8Array;
+  hasCertFlags: Uint8Array;
+  carats: Float32Array;
+  prices: Float32Array;
+  depths: Float32Array;
+  tables: Float32Array;
+  lwRatios: Float32Array;
+  lengths: Float32Array;
+  widths: Float32Array;
   byShape: Map<DiamondShape, number[]>;
   whiteCount: number;
   fancyCount: number;
@@ -49,10 +59,20 @@ export function isWhiteDiamond(d: Diamond): boolean {
   return st === 'бриллиант' || st === 'diamond' || st === 'белый бриллиант';
 }
 
+// High-speed columnar index optimized for 60,000 - 150,000+ unified multi-supplier stones
 export function buildCatalogIndex(catalog: Diamond[]): CatalogIndex {
   const len = catalog.length;
   const searchTokens = new Array<string>(len);
   const fancyFlags = new Uint8Array(len);
+  const hasVideoFlags = new Uint8Array(len);
+  const hasCertFlags = new Uint8Array(len);
+  const carats = new Float32Array(len);
+  const prices = new Float32Array(len);
+  const depths = new Float32Array(len);
+  const tables = new Float32Array(len);
+  const lwRatios = new Float32Array(len);
+  const lengths = new Float32Array(len);
+  const widths = new Float32Array(len);
   const byShape = new Map<DiamondShape, number[]>();
   let fancyCount = 0;
 
@@ -60,12 +80,30 @@ export function buildCatalogIndex(catalog: Diamond[]): CatalogIndex {
     const d = catalog[i];
     const shapeRu = SHAPE_SHORT_RU[d.shape] || d.shape;
     searchTokens[i] =
-      `${d.sku}\u0001${d.certNumber}\u0001${shapeRu}\u0001${d.stoneType || ''}\u0001${d.color}\u0001${d.colorFamily || ''}\u0001${d.origin}`.toLowerCase();
+      `${d.sku || ''}\u0001${d.certNumber || ''}\u0001${shapeRu}\u0001${d.stoneType || ''}\u0001${d.color || ''}\u0001${d.colorFamily || ''}\u0001${d.certLab || ''}`.toLowerCase();
 
     if (isFancyDiamond(d)) {
       fancyFlags[i] = 1;
       fancyCount++;
     }
+    if (d.videoUrl && d.videoUrl.startsWith('http')) {
+      hasVideoFlags[i] = 1;
+    }
+    if (
+      d.certNumber &&
+      !d.certNumber.startsWith('XL-') &&
+      !d.certNumber.startsWith('GS-')
+    ) {
+      hasCertFlags[i] = 1;
+    }
+
+    carats[i] = d.carat || 0;
+    prices[i] = d.priceUsd || 0;
+    depths[i] = d.depthPercent || 61.8;
+    tables[i] = d.tablePercent || 57.5;
+    lwRatios[i] = d.lwRatio || 1.0;
+    lengths[i] = d.lengthMm || 0;
+    widths[i] = d.widthMm || 0;
 
     let bucket = byShape.get(d.shape);
     if (!bucket) {
@@ -78,6 +116,15 @@ export function buildCatalogIndex(catalog: Diamond[]): CatalogIndex {
   return {
     searchTokens,
     fancyFlags,
+    hasVideoFlags,
+    hasCertFlags,
+    carats,
+    prices,
+    depths,
+    tables,
+    lwRatios,
+    lengths,
+    widths,
     byShape,
     whiteCount: len - fancyCount,
     fancyCount,
@@ -110,10 +157,18 @@ export function computeCatalogBounds(
   }
 
   return {
-    minCarat: Number.isFinite(minC) ? Math.max(0, Math.floor(minC * 20) / 20) : fallback.minCarat,
-    maxCarat: Number.isFinite(maxC) ? Math.max(1.0, Math.ceil(maxC * 20) / 20) : fallback.maxCarat,
-    minPrice: Number.isFinite(minP) ? Math.max(0, Math.floor(minP / 500) * 500) : fallback.minPrice,
-    maxPrice: Number.isFinite(maxP) ? Math.max(1000, Math.ceil(maxP / 1000) * 1000) : fallback.maxPrice,
+    minCarat: Number.isFinite(minC)
+      ? Math.max(0, Math.floor(minC * 20) / 20)
+      : fallback.minCarat,
+    maxCarat: Number.isFinite(maxC)
+      ? Math.max(1.0, Math.ceil(maxC * 20) / 20)
+      : fallback.maxCarat,
+    minPrice: Number.isFinite(minP)
+      ? Math.max(0, Math.floor(minP / 500) * 500)
+      : fallback.minPrice,
+    maxPrice: Number.isFinite(maxP)
+      ? Math.max(1000, Math.ceil(maxP / 1000) * 1000)
+      : fallback.maxPrice,
   };
 }
 
@@ -121,7 +176,8 @@ export function filterAndSortCatalog(
   catalog: Diamond[],
   index: CatalogIndex,
   filters: DiamondFilters,
-  deferredSearchQuery: string
+  deferredSearchQuery: string,
+  disabledSupplierIds?: Set<string>
 ): Diamond[] {
   const q = deferredSearchQuery.trim().toLowerCase();
   const hasShapes = filters.shapes.length > 0;
@@ -131,7 +187,14 @@ export function filterAndSortCatalog(
     filters.fancyIntensities && filters.fancyIntensities.length > 0;
   const hasColors = filters.colors.length > 0;
   const hasClarities = filters.clarities.length > 0;
-  const filterLab = filters.certLab !== 'ALL' ? filters.certLab.toUpperCase() : null;
+  const hasCuts = filters.cuts && filters.cuts.length > 0;
+  const hasPolishes = filters.polishes && filters.polishes.length > 0;
+  const hasSymmetries = filters.symmetries && filters.symmetries.length > 0;
+  const hasFluorescences = filters.fluorescences && filters.fluorescences.length > 0;
+  const hasCertLabs = filters.certLabs && filters.certLabs.length > 0;
+  const hasGrowthTypes = filters.growthTypes && filters.growthTypes.length > 0;
+  const filterLegacyLab =
+    !hasCertLabs && filters.certLab !== 'ALL' ? filters.certLab.toUpperCase() : null;
 
   const isWhiteDirOnly =
     filters.stoneTypes.length === 1 && filters.stoneTypes[0] === 'Бриллиант';
@@ -143,26 +206,85 @@ export function filterAndSortCatalog(
   const intensitySet = hasFancyIntensities ? new Set(filters.fancyIntensities) : null;
   const colorSet = hasColors ? new Set(filters.colors) : null;
   const claritySet = hasClarities ? new Set(filters.clarities) : null;
+  const cutSet = hasCuts ? new Set(filters.cuts) : null;
+  const polishSet = hasPolishes ? new Set(filters.polishes) : null;
+  const symmetrySet = hasSymmetries ? new Set(filters.symmetries) : null;
+  const fluorSet = hasFluorescences ? new Set(filters.fluorescences) : null;
+  const labSet = hasCertLabs
+    ? new Set(filters.certLabs.map((l) => l.toUpperCase()))
+    : null;
+  const growthSet = hasGrowthTypes ? new Set(filters.growthTypes) : null;
 
   const minCarat = filters.minCarat;
   const maxCarat = filters.maxCarat;
   const minPrice = filters.minPrice;
   const maxPrice = filters.maxPrice;
 
+  const checkDepth = filters.minDepthPercent > 0 || filters.maxDepthPercent < 100;
+  const checkTable = filters.minTablePercent > 0 || filters.maxTablePercent < 100;
+  const checkLw = filters.minLwRatio > 0 || filters.maxLwRatio < 5;
+  const checkLen = filters.minLengthMm > 0 || filters.maxLengthMm < 50;
+  const checkWid = filters.minWidthMm > 0 || filters.maxWidthMm < 50;
+
+  const hasDisabledSuppliers = Boolean(disabledSupplierIds && disabledSupplierIds.size > 0);
+  const {
+    carats,
+    prices,
+    depths,
+    tables,
+    lwRatios,
+    lengths,
+    widths,
+    fancyFlags,
+    hasVideoFlags,
+    hasCertFlags,
+    searchTokens,
+  } = index;
+
   const result: Diamond[] = [];
 
   const checkAndPush = (i: number) => {
+    const ct = carats[i];
+    if (ct < minCarat || ct > maxCarat) return;
+    const pr = prices[i];
+    if (pr < minPrice || pr > maxPrice) return;
+
+    if (filters.onlyWithVideo && hasVideoFlags[i] !== 1) return;
+    if (filters.onlyWithCert && hasCertFlags[i] !== 1) return;
+
+    if (checkDepth) {
+      const dp = depths[i];
+      if (dp < filters.minDepthPercent || dp > filters.maxDepthPercent) return;
+    }
+    if (checkTable) {
+      const tb = tables[i];
+      if (tb < filters.minTablePercent || tb > filters.maxTablePercent) return;
+    }
+    if (checkLw) {
+      const lw = lwRatios[i];
+      if (lw < filters.minLwRatio || lw > filters.maxLwRatio) return;
+    }
+    if (checkLen) {
+      const ln = lengths[i];
+      if (ln < filters.minLengthMm || ln > filters.maxLengthMm) return;
+    }
+    if (checkWid) {
+      const wd = widths[i];
+      if (wd < filters.minWidthMm || wd > filters.maxWidthMm) return;
+    }
+
     const d = catalog[i];
 
-    if (d.carat < minCarat || d.carat > maxCarat) return;
-    if (d.priceUsd < minPrice || d.priceUsd > maxPrice) return;
+    if (hasDisabledSuppliers && d.supplierId && disabledSupplierIds!.has(d.supplierId)) {
+      return;
+    }
 
     if (isWhiteDirOnly) {
-      if (index.fancyFlags[i] === 1) return;
+      if (fancyFlags[i] === 1) return;
       const st = d.stoneType || 'Бриллиант';
       if (st !== 'Бриллиант') return;
     } else if (isFancyDirOnly) {
-      if (index.fancyFlags[i] !== 1) return;
+      if (fancyFlags[i] !== 1) return;
     } else if (stoneTypeSet) {
       if (!stoneTypeSet.has(d.stoneType || 'Бриллиант')) return;
     }
@@ -176,8 +298,14 @@ export function filterAndSortCatalog(
     }
     if (colorSet && !colorSet.has(d.color)) return;
     if (claritySet && !claritySet.has(d.clarity)) return;
-    if (filterLab && d.certLab.toUpperCase() !== filterLab) return;
-    if (q && !index.searchTokens[i].includes(q)) return;
+    if (cutSet && !cutSet.has(d.cut)) return;
+    if (polishSet && !polishSet.has(d.polish)) return;
+    if (symmetrySet && !symmetrySet.has(d.symmetry)) return;
+    if (fluorSet && !fluorSet.has(d.fluorescence)) return;
+    if (growthSet && !growthSet.has(d.growthType || 'Natural')) return;
+    if (labSet && !labSet.has((d.certLab || '').toUpperCase())) return;
+    if (filterLegacyLab && (d.certLab || '').toUpperCase() !== filterLegacyLab) return;
+    if (q && !searchTokens[i].includes(q)) return;
 
     result.push(d);
   };
@@ -217,16 +345,16 @@ export function filterAndSortCatalog(
 }
 
 function getDiamondUniqueKey(d: Diamond): string {
-  const sku = d.sku.trim().toUpperCase();
-  const certNum = d.certNumber.trim().toUpperCase();
+  const sku = (d.sku || '').trim().toUpperCase();
+  const certNum = (d.certNumber || '').trim().toUpperCase();
   const isGeneratedCert =
     certNum.startsWith('XL-') || certNum.startsWith('GS-') || certNum === '';
 
   if (!isGeneratedCert) {
-    return `CERT:${d.certLab.trim().toUpperCase()}:${certNum}`;
+    return `CERT:${(d.certLab || 'GIA').trim().toUpperCase()}:${certNum}`;
   }
   if (sku) {
-    return `SKU:${sku}`;
+    return d.supplierId ? `SUP:${d.supplierId}:SKU:${sku}` : `SKU:${sku}`;
   }
   return `ID:${d.id}`;
 }
@@ -234,7 +362,8 @@ function getDiamondUniqueKey(d: Diamond): string {
 export function deduplicateDiamonds(
   incoming: Diamond[],
   existing: Diamond[],
-  replaceMode: 'none' | 'all' | 'fancy'
+  replaceMode: 'none' | 'all' | 'fancy' | 'supplier',
+  supplierId?: string
 ): DeduplicationResult {
   const map = new Map<string, Diamond>();
 
@@ -250,6 +379,13 @@ export function deduplicateDiamonds(
         map.set(getDiamondUniqueKey(d), d);
       }
     }
+  } else if (replaceMode === 'supplier' && supplierId) {
+    for (let i = 0; i < existing.length; i++) {
+      const d = existing[i];
+      if (d.supplierId !== supplierId) {
+        map.set(getDiamondUniqueKey(d), d);
+      }
+    }
   }
 
   const seenInBatch = new Set<string>();
@@ -262,13 +398,28 @@ export function deduplicateDiamonds(
     const key = getDiamondUniqueKey(d);
     if (seenInBatch.has(key)) {
       duplicatesInBatch++;
-      map.set(key, d);
+      // Keep the lower entry cost if same certificate appears twice in one batch
+      const prev = map.get(key);
+      if (!prev || (d.costPriceUsd || d.priceUsd) < (prev.costPriceUsd || prev.priceUsd)) {
+        map.set(key, d);
+      }
       continue;
     }
     seenInBatch.add(key);
 
-    if (map.has(key)) {
+    const existingStone = map.get(key);
+    if (existingStone) {
       updatedCount++;
+      // If same certificate comes from two different suppliers, keep the lower wholesale cost
+      if (
+        existingStone.supplierId &&
+        d.supplierId &&
+        existingStone.supplierId !== d.supplierId &&
+        (existingStone.costPriceUsd || existingStone.priceUsd) <
+          (d.costPriceUsd || d.priceUsd)
+      ) {
+        continue;
+      }
     } else {
       addedCount++;
     }
@@ -282,4 +433,63 @@ export function deduplicateDiamonds(
     updatedCount,
     duplicatesInBatch,
   };
+}
+
+export function rebuildSupplierFeeds(
+  catalog: Diamond[],
+  prevSuppliers: SupplierFeed[]
+): SupplierFeed[] {
+  const prevById = new Map(prevSuppliers.map((s) => [s.id, s]));
+  const stats = new Map<
+    string,
+    { name: string; fileName: string; total: number; white: number; fancy: number }
+  >();
+
+  for (let i = 0; i < catalog.length; i++) {
+    const d = catalog[i];
+    const supId = d.supplierId || (d.source === 'catalog' ? 'default-atelier' : 'manual');
+    const prev = prevById.get(supId);
+    const name =
+      d.supplierName ||
+      prev?.name ||
+      (supId === 'default-atelier'
+        ? 'Базовый каталог'
+        : supId === 'manual'
+          ? 'Добавлено вручную'
+          : supId);
+    const fileName =
+      d.supplierFileName ||
+      prev?.fileName ||
+      (supId === 'default-atelier' ? 'Встроенный каталог' : 'Ручной ввод');
+
+    let entry = stats.get(supId);
+    if (!entry) {
+      entry = { name, fileName, total: 0, white: 0, fancy: 0 };
+      stats.set(supId, entry);
+    }
+    entry.total++;
+    if (isFancyDiamond(d)) {
+      entry.fancy++;
+    } else {
+      entry.white++;
+    }
+  }
+
+  const nowIso = new Date().toISOString();
+  const next: SupplierFeed[] = [];
+  for (const [id, st] of stats.entries()) {
+    const prev = prevById.get(id);
+    next.push({
+      id,
+      name: prev?.name || st.name,
+      fileName: st.fileName,
+      stoneCount: st.total,
+      whiteCount: st.white,
+      fancyCount: st.fancy,
+      active: prev ? prev.active : true,
+      updatedAt: prev?.stoneCount === st.total ? prev.updatedAt : nowIso,
+    });
+  }
+
+  return next.sort((a, b) => b.stoneCount - a.stoneCount);
 }

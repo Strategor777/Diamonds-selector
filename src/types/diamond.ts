@@ -20,6 +20,12 @@ export type DiamondClarity = string;
 
 export type CutGrade = 'Ideal' | 'Excellent' | 'Very Good' | 'Good' | 'Mixed' | 'Step';
 
+export type PolishSymmetryGrade = 'Excellent' | 'Very Good' | 'Good';
+
+export type FluorescenceGrade = 'None' | 'Faint' | 'Medium' | 'Strong';
+
+export type GrowthType = 'Natural' | 'CVD' | 'HPHT';
+
 export type CertLab = 'GIA' | 'IGI' | 'HRD' | 'GRS' | 'SSEF' | 'Gubelin' | string;
 
 export type PriceCurrency = 'USD' | 'RUB' | 'EUR';
@@ -33,19 +39,31 @@ export interface PricingConfig {
   applyOnImport: boolean;
 }
 
+export interface SupplierFeed {
+  id: string;
+  name: string;
+  fileName: string;
+  stoneCount: number;
+  whiteCount: number;
+  fancyCount: number;
+  active: boolean;
+  updatedAt: string;
+}
+
 export interface Diamond {
   id: string;
   sku: string;
   stoneType?: string;
+  growthType?: GrowthType;
   shape: DiamondShape;
   carat: number;
   color: DiamondColor;
   colorFamily?: string;
   clarity: DiamondClarity;
   cut: CutGrade;
-  polish: 'Excellent' | 'Very Good' | 'Good';
-  symmetry: 'Excellent' | 'Very Good' | 'Good';
-  fluorescence: 'None' | 'Faint' | 'Medium' | 'Strong';
+  polish: PolishSymmetryGrade;
+  symmetry: PolishSymmetryGrade;
+  fluorescence: FluorescenceGrade;
   depthPercent: number;
   tablePercent: number;
   crownAngle: number;
@@ -72,6 +90,9 @@ export interface Diamond {
   origin: string;
   inStock: boolean;
   source?: 'catalog' | 'sheets' | 'xlsx';
+  supplierId?: string;
+  supplierName?: string;
+  supplierFileName?: string;
   directory?: 'white' | 'fancy';
   isFancyColor?: boolean;
   fancyIntensity?: string;
@@ -89,10 +110,28 @@ export interface DiamondFilters {
   fancyIntensities: string[];
   stoneTypes: string[];
   clarities: DiamondClarity[];
+  cuts: CutGrade[];
+  polishes: PolishSymmetryGrade[];
+  symmetries: PolishSymmetryGrade[];
+  fluorescences: FluorescenceGrade[];
+  certLabs: string[];
+  growthTypes: GrowthType[];
   minCarat: number;
   maxCarat: number;
   minPrice: number;
   maxPrice: number;
+  minDepthPercent: number;
+  maxDepthPercent: number;
+  minTablePercent: number;
+  maxTablePercent: number;
+  minLwRatio: number;
+  maxLwRatio: number;
+  minLengthMm: number;
+  maxLengthMm: number;
+  minWidthMm: number;
+  maxWidthMm: number;
+  onlyWithVideo: boolean;
+  onlyWithCert: boolean;
   certLab: string;
   onlyPriceDrops: boolean;
   searchQuery: string;
@@ -161,6 +200,7 @@ export interface OrderRequest {
   id: string;
   requestNumber: string;
   createdAt: string;
+  status?: 'new' | 'in_progress' | 'completed' | 'cancelled';
   customerName: string;
   contactPhone: string;
   contactEmail: string;

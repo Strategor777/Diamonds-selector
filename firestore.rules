@@ -1,0 +1,393 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net: default deny everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // === Global Hardened Primitives ===
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'imenielordovo@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidUid(val) {
+      return val is string && val.size() >= 1 && val.size() <= 128 && val.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // === Entity Validation Blueprints ===
+
+    function isValidRegistryMeta(data) {
+      return data.keys().hasAll([
+        'version',
+        'totalCount',
+        'whiteCount',
+        'fancyCount',
+        'shardCount',
+        'supplierCount',
+        'updatedByUid',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'version',
+        'totalCount',
+        'whiteCount',
+        'fancyCount',
+        'shardCount',
+        'supplierCount',
+        'updatedByUid',
+        'updatedAt'
+      ]) &&
+      data.version is number && data.version >= 1 &&
+      data.totalCount is number && data.totalCount >= 0 && data.totalCount <= 1000000 &&
+      data.whiteCount is number && data.whiteCount >= 0 && data.whiteCount <= 1000000 &&
+      data.fancyCount is number && data.fancyCount >= 0 && data.fancyCount <= 1000000 &&
+      data.shardCount is number && data.shardCount >= 0 && data.shardCount <= 5000 &&
+      data.supplierCount is number && data.supplierCount >= 0 && data.supplierCount <= 1000 &&
+      isValidUid(data.updatedByUid) &&
+      data.updatedByUid == request.auth.uid &&
+      data.updatedAt is timestamp &&
+      data.updatedAt == request.time;
+    }
+
+    function isValidPricingConfig(data) {
+      return data.keys().hasAll([
+        'mode',
+        'value',
+        'roundingStep',
+        'applyOnImport',
+        'updatedByUid',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'mode',
+        'value',
+        'roundingStep',
+        'applyOnImport',
+        'updatedByUid',
+        'updatedAt'
+      ]) &&
+      data.mode is string && data.mode.size() <= 20 && (data.mode == 'multiplier' || data.mode == 'percent') &&
+      data.value is number && data.value >= -90 && data.value <= 1000 &&
+      data.roundingStep is number && (data.roundingStep == 1 || data.roundingStep == 10 || data.roundingStep == 50 || data.roundingStep == 100) &&
+      data.applyOnImport is bool &&
+      isValidUid(data.updatedByUid) &&
+      data.updatedByUid == request.auth.uid &&
+      data.updatedAt is timestamp &&
+      data.updatedAt == request.time;
+    }
+
+    function isValidSupplierFeed(data) {
+      return data.keys().hasAll([
+        'name',
+        'fileName',
+        'stoneCount',
+        'whiteCount',
+        'fancyCount',
+        'active',
+        'updatedByUid',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'name',
+        'fileName',
+        'stoneCount',
+        'whiteCount',
+        'fancyCount',
+        'active',
+        'updatedByUid',
+        'updatedAt'
+      ]) &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+      data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 256 &&
+      data.stoneCount is number && data.stoneCount >= 0 && data.stoneCount <= 1000000 &&
+      data.whiteCount is number && data.whiteCount >= 0 && data.whiteCount <= 1000000 &&
+      data.fancyCount is number && data.fancyCount >= 0 && data.fancyCount <= 1000000 &&
+      data.active is bool &&
+      isValidUid(data.updatedByUid) &&
+      data.updatedByUid == request.auth.uid &&
+      data.updatedAt is timestamp &&
+      data.updatedAt == request.time;
+    }
+
+    function isValidPublicCatalogShard(data) {
+      return data.keys().hasAll([
+        'shardIndex',
+        'version',
+        'count',
+        'items',
+        'updatedByUid',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'shardIndex',
+        'version',
+        'count',
+        'items',
+        'updatedByUid',
+        'updatedAt'
+      ]) &&
+      data.shardIndex is number && data.shardIndex >= 0 && data.shardIndex <= 5000 &&
+      data.version is number && data.version >= 1 &&
+      data.count is number && data.count >= 0 && data.count <= 500 &&
+      data.items is list && data.items.size() <= 500 &&
+      (data.items.size() == 0 || data.items[0] is map) &&
+      isValidUid(data.updatedByUid) &&
+      data.updatedByUid == request.auth.uid &&
+      data.updatedAt is timestamp &&
+      data.updatedAt == request.time;
+    }
+
+    function isValidManagerCostShard(data) {
+      return data.keys().hasAll([
+        'shardIndex',
+        'version',
+        'count',
+        'entries',
+        'updatedByUid',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'shardIndex',
+        'version',
+        'count',
+        'entries',
+        'updatedByUid',
+        'updatedAt'
+      ]) &&
+      data.shardIndex is number && data.shardIndex >= 0 && data.shardIndex <= 5000 &&
+      data.version is number && data.version >= 1 &&
+      data.count is number && data.count >= 0 && data.count <= 500 &&
+      data.entries is list && data.entries.size() <= 500 &&
+      (data.entries.size() == 0 || data.entries[0] is map) &&
+      isValidUid(data.updatedByUid) &&
+      data.updatedByUid == request.auth.uid &&
+      data.updatedAt is timestamp &&
+      data.updatedAt == request.time;
+    }
+
+    function isValidOrderRequest(data) {
+      return data.keys().hasAll([
+        'userId',
+        'requestNumber',
+        'status',
+        'customerName',
+        'contactPhone',
+        'contactEmail',
+        'preferredChannel',
+        'comment',
+        'items',
+        'totalCarat',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'userId',
+        'requestNumber',
+        'status',
+        'customerName',
+        'contactPhone',
+        'contactEmail',
+        'preferredChannel',
+        'comment',
+        'items',
+        'totalCarat',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      isValidUid(data.userId) &&
+      data.requestNumber is string && data.requestNumber.size() >= 3 && data.requestNumber.size() <= 64 &&
+      data.status is string && data.status.size() <= 20 &&
+      (data.status == 'new' || data.status == 'in_progress' || data.status == 'completed' || data.status == 'cancelled') &&
+      data.customerName is string && data.customerName.size() >= 1 && data.customerName.size() <= 120 &&
+      data.contactPhone is string && data.contactPhone.size() <= 40 &&
+      data.contactEmail is string && data.contactEmail.size() <= 160 &&
+      data.preferredChannel is string && data.preferredChannel.size() <= 20 &&
+      (data.preferredChannel == 'phone' || data.preferredChannel == 'whatsapp' || data.preferredChannel == 'telegram' || data.preferredChannel == 'email') &&
+      data.comment is string && data.comment.size() <= 1000 &&
+      data.items is list && data.items.size() >= 1 && data.items.size() <= 100 &&
+      data.items[0] is map &&
+      data.totalCarat is number && data.totalCarat >= 0 && data.totalCarat <= 10000 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp &&
+      data.updatedAt == request.time;
+    }
+
+    function isValidAdminUser(data) {
+      return data.keys().hasAll(['email', 'role', 'createdAt']) &&
+      data.keys().hasOnly(['email', 'role', 'createdAt']) &&
+      data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+      data.role is string && data.role.size() <= 20 && (data.role == 'admin' || data.role == 'manager') &&
+      data.createdAt is timestamp;
+    }
+
+    // === Collection Rules ===
+
+    // 1. Public registry manifest (no PII, no costs)
+    match /registry_meta/{metaId} {
+      allow get: if isValidId(metaId);
+      allow list: if false;
+      allow create: if isValidId(metaId) && isValidRegistryMeta(incoming()) && isAdmin();
+      allow update: if isValidId(metaId) && isValidRegistryMeta(incoming()) && isAdmin() &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'version',
+          'totalCount',
+          'whiteCount',
+          'fancyCount',
+          'shardCount',
+          'supplierCount',
+          'updatedByUid',
+          'updatedAt'
+        ]);
+      allow delete: if isValidId(metaId) && isAdmin();
+    }
+
+    // 2. Manager-only pricing configuration
+    match /pricing_config/{configId} {
+      allow get: if isValidId(configId) && isAdmin();
+      allow list: if false;
+      allow create: if isValidId(configId) && isValidPricingConfig(incoming()) && isAdmin();
+      allow update: if isValidId(configId) && isValidPricingConfig(incoming()) && isAdmin() &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'mode',
+          'value',
+          'roundingStep',
+          'applyOnImport',
+          'updatedByUid',
+          'updatedAt'
+        ]);
+      allow delete: if isValidId(configId) && isAdmin();
+    }
+
+    // 3. Manager-only supplier registry feeds
+    match /suppliers/{supplierId} {
+      allow get: if isValidId(supplierId) && isAdmin();
+      allow list: if isBootstrappedAdmin();
+      allow create: if isValidId(supplierId) && isValidSupplierFeed(incoming()) && isAdmin();
+      allow update: if isValidId(supplierId) && isValidSupplierFeed(incoming()) && isAdmin() &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name',
+          'fileName',
+          'stoneCount',
+          'whiteCount',
+          'fancyCount',
+          'active',
+          'updatedByUid',
+          'updatedAt'
+        ]);
+      allow delete: if isValidId(supplierId) && isAdmin();
+    }
+
+    // 4. Public storefront catalog shards (strictly client-safe, zero cost prices)
+    match /public_catalog_shards/{shardId} {
+      allow get: if isValidId(shardId);
+      allow list: if resource.data.version is number && resource.data.version >= 1;
+      allow create: if isValidId(shardId) && isValidPublicCatalogShard(incoming()) && isAdmin();
+      allow update: if isValidId(shardId) && isValidPublicCatalogShard(incoming()) && isAdmin() &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'shardIndex',
+          'version',
+          'count',
+          'items',
+          'updatedByUid',
+          'updatedAt'
+        ]);
+      allow delete: if isValidId(shardId) && isAdmin();
+    }
+
+    // 5. Private manager-only cost & supplier shards
+    match /manager_cost_shards/{shardId} {
+      allow get: if isValidId(shardId) && isAdmin();
+      allow list: if isBootstrappedAdmin() && resource.data.version is number;
+      allow create: if isValidId(shardId) && isValidManagerCostShard(incoming()) && isAdmin();
+      allow update: if isValidId(shardId) && isValidManagerCostShard(incoming()) && isAdmin() &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'shardIndex',
+          'version',
+          'count',
+          'entries',
+          'updatedByUid',
+          'updatedAt'
+        ]);
+      allow delete: if isValidId(shardId) && isAdmin();
+    }
+
+    // 6. Customer order requests (PII isolated by userId or admin)
+    match /orders/{orderId} {
+      allow get: if isValidId(orderId) && isSignedIn() && (
+        existing().userId == request.auth.uid || isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        resource.data.userId == request.auth.uid || isBootstrappedAdmin()
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(orderId) &&
+        isValidOrderRequest(incoming()) &&
+        incoming().userId == request.auth.uid &&
+        incoming().status == 'new' &&
+        incoming().createdAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidId(orderId) &&
+        isValidOrderRequest(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().requestNumber == existing().requestNumber &&
+        (
+          isAdmin() ||
+          (
+            existing().userId == request.auth.uid &&
+            existing().status == 'new' &&
+            incoming().status == 'cancelled' &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          )
+        );
+      allow delete: if isValidId(orderId) && isAdmin();
+    }
+
+    // 7. Admin RBAC collection
+    match /admins/{adminUid} {
+      allow get: if isValidId(adminUid) && isSignedIn() && (
+        request.auth.uid == adminUid || isAdmin()
+      );
+      allow list: if isBootstrappedAdmin();
+      allow create: if isValidId(adminUid) &&
+        isValidAdminUser(incoming()) &&
+        incoming().createdAt == request.time &&
+        isAdmin();
+      allow update: if isValidId(adminUid) &&
+        isValidAdminUser(incoming()) &&
+        incoming().createdAt == existing().createdAt &&
+        isAdmin() &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['email', 'role']);
+      allow delete: if isValidId(adminUid) && isAdmin();
+    }
+  }
+}

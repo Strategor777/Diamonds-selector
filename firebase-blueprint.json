@@ -1,0 +1,351 @@
+{
+  "entities": {
+    "RegistryMeta": {
+      "title": "RegistryMeta",
+      "description": "Public manifest for the unified diamond catalog registry version and shard counts.",
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "number",
+          "description": "Monotonically increasing catalog revision number."
+        },
+        "totalCount": {
+          "type": "number",
+          "description": "Total active unique stones across all suppliers."
+        },
+        "whiteCount": {
+          "type": "number",
+          "description": "Count of white diamonds."
+        },
+        "fancyCount": {
+          "type": "number",
+          "description": "Count of colored fancy diamonds."
+        },
+        "shardCount": {
+          "type": "number",
+          "description": "Total number of public catalog shard documents."
+        },
+        "supplierCount": {
+          "type": "number",
+          "description": "Count of active supplier feeds merged into the registry."
+        },
+        "updatedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the manager who published the registry update."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last publish."
+        }
+      },
+      "required": [
+        "version",
+        "totalCount",
+        "whiteCount",
+        "fancyCount",
+        "shardCount",
+        "supplierCount",
+        "updatedByUid",
+        "updatedAt"
+      ]
+    },
+    "PricingConfigDoc": {
+      "title": "PricingConfigDoc",
+      "description": "Manager-only wholesale-to-client markup pricing formula.",
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["multiplier", "percent"],
+          "maxLength": 20,
+          "description": "Markup calculation mode."
+        },
+        "value": {
+          "type": "number",
+          "description": "Multiplier factor or percentage value."
+        },
+        "roundingStep": {
+          "type": "number",
+          "description": "Client price rounding step (1, 10, 50, or 100)."
+        },
+        "applyOnImport": {
+          "type": "boolean",
+          "description": "Whether markup is automatically applied during Excel imports."
+        },
+        "updatedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "mode",
+        "value",
+        "roundingStep",
+        "applyOnImport",
+        "updatedByUid",
+        "updatedAt"
+      ]
+    },
+    "SupplierFeed": {
+      "title": "SupplierFeed",
+      "description": "Manager-only metadata for each supplier price list merged into the unified registry.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Display name of the supplier."
+        },
+        "fileName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Original imported file name."
+        },
+        "stoneCount": {
+          "type": "number",
+          "description": "Number of stones contributed by this supplier."
+        },
+        "whiteCount": {
+          "type": "number"
+        },
+        "fancyCount": {
+          "type": "number"
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Whether stones from this supplier are active in the storefront."
+        },
+        "updatedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "name",
+        "fileName",
+        "stoneCount",
+        "whiteCount",
+        "fancyCount",
+        "active",
+        "updatedByUid",
+        "updatedAt"
+      ]
+    },
+    "PublicCatalogShard": {
+      "title": "PublicCatalogShard",
+      "description": "Public storefront shard containing up to 450 client-safe diamond records (no wholesale cost prices or supplier identities).",
+      "type": "object",
+      "properties": {
+        "shardIndex": {
+          "type": "number",
+          "description": "Zero-based shard sequence index."
+        },
+        "version": {
+          "type": "number",
+          "description": "Registry revision this shard belongs to."
+        },
+        "count": {
+          "type": "number",
+          "description": "Number of items inside this shard."
+        },
+        "items": {
+          "type": "array",
+          "description": "Bounded array (max 500) of native compact diamond maps."
+        },
+        "updatedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "shardIndex",
+        "version",
+        "count",
+        "items",
+        "updatedByUid",
+        "updatedAt"
+      ]
+    },
+    "ManagerCostShard": {
+      "title": "ManagerCostShard",
+      "description": "Private manager-only shard holding wholesale cost prices, markup rules, and supplier attribution.",
+      "type": "object",
+      "properties": {
+        "shardIndex": {
+          "type": "number"
+        },
+        "version": {
+          "type": "number"
+        },
+        "count": {
+          "type": "number"
+        },
+        "entries": {
+          "type": "array",
+          "description": "Bounded array (max 500) of cost and supplier overlay maps."
+        },
+        "updatedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "shardIndex",
+        "version",
+        "count",
+        "entries",
+        "updatedByUid",
+        "updatedAt"
+      ]
+    },
+    "OrderRequestDoc": {
+      "title": "OrderRequestDoc",
+      "description": "Customer cart order request containing PII, readable only by its owner or admin.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "requestNumber": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 64
+        },
+        "status": {
+          "type": "string",
+          "enum": ["new", "in_progress", "completed", "cancelled"],
+          "maxLength": 20
+        },
+        "customerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "contactPhone": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "contactEmail": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "preferredChannel": {
+          "type": "string",
+          "enum": ["phone", "whatsapp", "telegram", "email"],
+          "maxLength": 20
+        },
+        "comment": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "items": {
+          "type": "array",
+          "description": "Bounded array (max 100) of selected stone summaries."
+        },
+        "totalCarat": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "userId",
+        "requestNumber",
+        "status",
+        "customerName",
+        "contactPhone",
+        "contactEmail",
+        "preferredChannel",
+        "comment",
+        "items",
+        "totalCarat",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized manager/admin UID record.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "manager"],
+          "maxLength": 20
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["email", "role", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/registry_meta/{metaId}": {
+      "schema": { "$ref": "#/entities/RegistryMeta" },
+      "description": "Public manifest describing active catalog revision and shard count."
+    },
+    "/pricing_config/{configId}": {
+      "schema": { "$ref": "#/entities/PricingConfigDoc" },
+      "description": "Manager-only pricing multiplier and rounding settings."
+    },
+    "/suppliers/{supplierId}": {
+      "schema": { "$ref": "#/entities/SupplierFeed" },
+      "description": "Manager-only unified registry supplier feed metadata."
+    },
+    "/public_catalog_shards/{shardId}": {
+      "schema": { "$ref": "#/entities/PublicCatalogShard" },
+      "description": "Public storefront stone shards without wholesale cost prices or supplier PII."
+    },
+    "/manager_cost_shards/{shardId}": {
+      "schema": { "$ref": "#/entities/ManagerCostShard" },
+      "description": "Private manager-only wholesale cost, markup, and supplier attribution shards."
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/OrderRequestDoc" },
+      "description": "Customer cart order requests isolated by userId and readable by admins."
+    },
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "RBAC admin registry."
+    }
+  }
+}

@@ -1,7 +1,11 @@
 import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import {
+  Building2,
   Check,
+  CloudUpload,
   Edit3,
+  Eye,
+  EyeOff,
   FileSpreadsheet,
   Lock,
   Percent,
@@ -27,6 +31,7 @@ import {
   getFancyDiamondImage,
 } from '../data/diamonds';
 import { classifyColorFamily } from '../lib/diamondMapper';
+import type { RegistrySyncProgress } from '../lib/catalogPersistence';
 import {
   CutGrade,
   Diamond,
@@ -34,19 +39,29 @@ import {
   PriceCurrency,
   PricingConfig,
   PricingMode,
+  SupplierFeed,
 } from '../types/diamond';
 import { NumericInput } from './NumericInput';
 import { PaginationBar } from './PaginationBar';
 
 interface ManagerCabinetViewProps {
   catalog: Diamond[];
+  suppliers: SupplierFeed[];
   pricingConfig: PricingConfig;
   managerEmail?: string | null;
+  isAdminSignedIn?: boolean;
+  isSyncingCloud?: boolean;
+  syncProgress?: RegistrySyncProgress | null;
+  cloudStatusMessage?: string | null;
   onUpdatePricingConfig: (next: PricingConfig) => void;
   onApplyPricingToStones: (stoneIds: string[] | null, config: PricingConfig) => void;
   onUpdateDiamond: (updated: Diamond) => void;
   onAddDiamond: (created: Diamond) => void;
   onDeleteDiamond: (diamondId: string) => void;
+  onToggleSupplierActive: (supplierId: string) => void;
+  onDeleteSupplier: (supplierId: string) => void;
+  onPublishToCloud: () => void;
+  onRequestGoogleLogin: () => void;
   onOpenExcelImport: () => void;
   onLockCabinet?: () => void;
 }
@@ -71,17 +86,27 @@ interface EditorDraft {
 
 export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
   catalog,
+  suppliers,
   pricingConfig,
   managerEmail,
+  isAdminSignedIn = false,
+  isSyncingCloud = false,
+  syncProgress = null,
+  cloudStatusMessage = null,
   onUpdatePricingConfig,
   onApplyPricingToStones,
   onUpdateDiamond,
   onAddDiamond,
   onDeleteDiamond,
+  onToggleSupplierActive,
+  onDeleteSupplier,
+  onPublishToCloud,
+  onRequestGoogleLogin,
   onOpenExcelImport,
   onLockCabinet,
 }) => {
   const [directoryFilter, setDirectoryFilter] = useState<'all' | 'white' | 'fancy'>('all');
+  const [supplierFilter, setSupplierFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const deferredSearch = useDeferredValue(searchQuery);
   const [page, setPage] = useState(1);
@@ -116,12 +141,17 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
       const d = catalog[i];
       if (directoryFilter === 'fancy' && !isFancyStone(d)) continue;
       if (directoryFilter === 'white' && isFancyStone(d)) continue;
+      if (supplierFilter !== 'ALL') {
+        const supId = d.supplierId || (d.source === 'catalog' ? 'default-atelier' : 'manual');
+        if (supId !== supplierFilter) continue;
+      }
       if (
         q &&
         !(d.sku || '').toLowerCase().includes(q) &&
         !(d.certNumber || '').toLowerCase().includes(q) &&
         !(d.color || '').toLowerCase().includes(q) &&
         !(d.stoneType || '').toLowerCase().includes(q) &&
+        !(d.supplierName || '').toLowerCase().includes(q) &&
         !(SHAPE_SHORT_RU[d.shape] || d.shape || '').toLowerCase().includes(q) &&
         !(d.origin || '').toLowerCase().includes(q)
       ) {
@@ -130,11 +160,11 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
       res.push(d);
     }
     return res;
-  }, [catalog, directoryFilter, deferredSearch]);
+  }, [catalog, directoryFilter, supplierFilter, deferredSearch]);
 
   useEffect(() => {
     setPage(1);
-  }, [filteredCatalog.length, directoryFilter, deferredSearch]);
+  }, [filteredCatalog.length, directoryFilter, supplierFilter, deferredSearch]);
 
   const totalPages = Math.max(1, Math.ceil(filteredCatalog.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -514,6 +544,189 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
           </div>
         )}
 
+        {/* Unified Multi-Supplier Registry & Cloud Publishing Panel */}
+        <div className="bg-white border border-[#E4E6EB] rounded-xl p-6 space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-4 pb-4 border-b border-[#E4E6EB]">
+            <div>
+              <div className="flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-[#1B365D]" />
+                <h2 className="text-lg font-semibold text-[#111317]">
+                  Единый реестр поставщиков ({suppliers.length})
+                </h2>
+              </div>
+              <p className="text-xs text-[#5A606D] mt-0.5">
+                Добавляйте прайс-листы разных поставщиков в единый каталог — все камни
+                проходят через общую фильтрацию и дедупликацию по сертификатам. Все
+                изменения автоматически сохраняются в локальной базе браузера и не
+                сбрасываются при перезагрузке.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {isAdminSignedIn ? (
+                <button
+                  type="button"
+                  disabled={isSyncingCloud}
+                  onClick={onPublishToCloud}
+                  className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg bg-[#1B365D] text-white hover:bg-[#142947] disabled:opacity-50 transition-colors whitespace-nowrap"
+                >
+                  <CloudUpload className="w-4 h-4" />
+                  {isSyncingCloud ? 'Публикация...' : 'Опубликовать в облачную базу'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onRequestGoogleLogin}
+                  className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg border border-[#1B365D] bg-[#F4F7FB] text-[#1B365D] hover:bg-[#E5EDF7] transition-colors whitespace-nowrap"
+                >
+                  <CloudUpload className="w-4 h-4" />
+                  Войти с Google для публикации в облако
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Cloud Publish Progress Bar */}
+          {isSyncingCloud && syncProgress && (
+            <div className="p-3.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-lg space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-medium text-[#111317]">
+                  {syncProgress.phase === 'local'
+                    ? 'Сохранение локальной копии...'
+                    : syncProgress.phase === 'cloud-public'
+                      ? 'Загрузка витрины в облачную базу...'
+                      : syncProgress.phase === 'cloud-costs'
+                        ? 'Сохранение закрытых входных цен...'
+                        : 'Обновление метаданных реестра...'}
+                </span>
+                <span className="font-mono tabular-nums text-[#1B365D] font-semibold">
+                  {syncProgress.completed} / {syncProgress.total}
+                </span>
+              </div>
+              <div className="h-1.5 bg-[#E2E8F0] rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-[#1B365D] transition-all duration-150"
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      Math.round(
+                        (syncProgress.completed / Math.max(1, syncProgress.total)) * 100
+                      )
+                    )}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {cloudStatusMessage && !isSyncingCloud && (
+            <div className="px-3.5 py-2.5 rounded-lg bg-[#F4F7FB] border border-[#CBD5E1] text-xs text-[#1B365D]">
+              {cloudStatusMessage}
+            </div>
+          )}
+
+          {/* Supplier Feeds List */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {suppliers.map((sup) => {
+              const isSelected = supplierFilter === sup.id;
+              return (
+                <div
+                  key={sup.id}
+                  className={`p-3.5 rounded-lg border transition-colors flex flex-col justify-between gap-2.5 ${
+                    isSelected
+                      ? 'border-[#1B365D] bg-[#F8FAFC]'
+                      : sup.active
+                        ? 'border-[#E4E6EB] bg-[#FAFAFA]'
+                        : 'border-[#E4E6EB] bg-[#F3F4F6] opacity-75'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-[#111317] truncate">
+                        {sup.name}
+                      </div>
+                      <div className="text-[11px] font-mono text-[#5A606D] truncate mt-0.5">
+                        {sup.fileName}
+                      </div>
+                    </div>
+                    <span
+                      className={`px-2 py-0.5 text-[10px] font-medium rounded border shrink-0 ${
+                        sup.active
+                          ? 'bg-[#ECFDF5] border-[#A7F3D0] text-[#065F46]'
+                          : 'bg-white border-[#D5D9E0] text-[#5A606D]'
+                      }`}
+                    >
+                      {sup.active ? 'В витрине' : 'Скрыт'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] font-mono tabular-nums text-[#5A606D]">
+                    <span>Всего: {sup.stoneCount.toLocaleString('ru-RU')}</span>
+                    <span>
+                      Белых: {sup.whiteCount.toLocaleString('ru-RU')} · Цветных:{' '}
+                      {sup.fancyCount.toLocaleString('ru-RU')}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-1.5 pt-2 border-t border-[#E4E6EB]">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSupplierFilter((prev) => (prev === sup.id ? 'ALL' : sup.id))
+                      }
+                      className={`px-2 py-1 text-[11px] font-medium rounded border transition-colors ${
+                        isSelected
+                          ? 'bg-[#1B365D] border-[#1B365D] text-white'
+                          : 'bg-white border-[#D5D9E0] text-[#111317] hover:bg-[#F7F8FA]'
+                      }`}
+                    >
+                      {isSelected ? 'Показаны' : 'Фильтр'}
+                    </button>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => onToggleSupplierActive(sup.id)}
+                        title={
+                          sup.active
+                            ? 'Временно скрыть прайс из клиентского каталога'
+                            : 'Вернуть прайс в клиентский каталог'
+                        }
+                        className="inline-flex items-center gap-1 px-2 py-1 text-[11px] rounded border border-[#D5D9E0] bg-white text-[#5A606D] hover:text-[#111317]"
+                      >
+                        {sup.active ? (
+                          <>
+                            <EyeOff className="w-3 h-3" />
+                            Скрыть
+                          </>
+                        ) : (
+                          <>
+                            <Eye className="w-3 h-3" />
+                            Показать
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (supplierFilter === sup.id) setSupplierFilter('ALL');
+                          onDeleteSupplier(sup.id);
+                        }}
+                        aria-label={`Удалить прайс поставщика ${sup.name}`}
+                        title="Удалить все камни этого поставщика"
+                        className="p-1 rounded border border-transparent text-[#6B7280] hover:text-[#991B1B] hover:bg-[#FEF2F2]"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Global Pricing Control Panel */}
         <div className="bg-white border border-[#E4E6EB] rounded-xl p-6 space-y-5">
           <div className="flex flex-wrap items-start justify-between gap-4 pb-4 border-b border-[#E4E6EB]">
@@ -703,16 +916,34 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
               ))}
             </div>
 
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-[#6B7280] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Поиск по SKU, сертификату, цвету..."
-                aria-label="Поиск камней в кабинете менеджера"
-                className="pl-8 pr-3 py-1.5 text-xs bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg w-64 sm:w-72 focus:outline-none focus:border-[#1B365D]"
-              />
+            <div className="flex flex-wrap items-center gap-2.5">
+              {suppliers.length > 1 && (
+                <select
+                  value={supplierFilter}
+                  onChange={(e) => setSupplierFilter(e.target.value)}
+                  aria-label="Фильтр по поставщику"
+                  className="px-3 py-1.5 text-xs bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg text-[#111317]"
+                >
+                  <option value="ALL">Все поставщики ({suppliers.length})</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.stoneCount.toLocaleString('ru-RU')})
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-[#6B7280] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Поиск по SKU, сертификату, поставщику..."
+                  aria-label="Поиск камней в кабинете менеджера"
+                  className="pl-8 pr-3 py-1.5 text-xs bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg w-64 sm:w-72 focus:outline-none focus:border-[#1B365D]"
+                />
+              </div>
             </div>
           </div>
 
@@ -759,6 +990,7 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                             </div>
                             <div className="text-[11px] text-[#5A606D] truncate">
                               {isFancyStone(d) ? 'Цветные бриллианты' : 'Белые бриллианты'}
+                              {d.supplierName ? ` · ${d.supplierName}` : ''}
                             </div>
                           </div>
                         </div>
@@ -883,6 +1115,7 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                   type="button"
                   onClick={() => {
                     setDirectoryFilter('all');
+                    setSupplierFilter('ALL');
                     setSearchQuery('');
                   }}
                   className="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-[#D5D9E0] bg-white text-[#111317]"

@@ -16,6 +16,7 @@ import {
   DiamondClarity,
   DiamondColor,
   DiamondShape,
+  GrowthType,
   PriceCurrency,
   PricingConfig,
 } from '../types/diamond';
@@ -783,6 +784,28 @@ export interface MapRowsOptions {
   defaultDirectory?: 'white' | 'fancy';
   defaultStoneType?: string;
   pricingConfig?: PricingConfig;
+  supplierId?: string;
+  supplierName?: string;
+  supplierFileName?: string;
+}
+
+function detectGrowthType(
+  rawStoneType?: string,
+  rawOrigin?: string,
+  rawRowText?: string
+): GrowthType {
+  const combined = `${rawStoneType || ''} ${rawOrigin || ''} ${rawRowText || ''}`.toLowerCase();
+  if (combined.includes('hpht')) return 'HPHT';
+  if (
+    combined.includes('cvd') ||
+    combined.includes('lab grown') ||
+    combined.includes('lab-grown') ||
+    combined.includes('lgd') ||
+    combined.includes('выращ')
+  ) {
+    return 'CVD';
+  }
+  return 'Natural';
 }
 
 export function mapRowsToDiamonds(
@@ -979,10 +1002,18 @@ export function mapRowsToDiamonds(
         carat * 100
       )}-${i}`;
 
+    const rawOriginCell = cell(row, mapping.origin);
+    const growthType = detectGrowthType(
+      rawStoneType,
+      rawOriginCell,
+      `${sku} ${certLab}`
+    );
+
     diamonds.push({
-      id: `${source}-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+      id: `${options?.supplierId ? `${options.supplierId}-` : `${source}-`}${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
       sku,
       stoneType,
+      growthType,
       shape,
       carat: Number(carat.toFixed(2)),
       color,
@@ -1020,10 +1051,13 @@ export function mapRowsToDiamonds(
       previousPriceUsd,
       priceChangedAt: previousPriceUsd ? new Date().toISOString() : undefined,
       origin:
-        cell(row, mapping.origin) ||
+        rawOriginCell ||
         (source === 'xlsx' ? 'Файл .xlsx' : 'Google Sheets'),
       inStock: true,
       source,
+      supplierId: options?.supplierId,
+      supplierName: options?.supplierName,
+      supplierFileName: options?.supplierFileName,
       directory,
       isFancyColor: directory === 'fancy',
       fancyIntensity,

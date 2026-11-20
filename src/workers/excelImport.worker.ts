@@ -199,9 +199,10 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
           0,
           msg.options
         );
+        const idPrefix = msg.options?.supplierId ? `${msg.options.supplierId}-` : 'xlsx-';
         for (let j = 0; j < chunkRes.diamonds.length; j++) {
           const item = chunkRes.diamonds[j];
-          item.id = `xlsx-${start + j}-${item.sku}`;
+          item.id = `${idPrefix}${start + j}-${item.sku}`;
           allDiamonds.push(item);
         }
         totalSkipped += chunkRes.skippedRows;
