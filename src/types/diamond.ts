@@ -114,6 +114,11 @@ export interface Diamond {
   overtone?: string;
   colorOrigin?: string;
   colorDistribution?: string;
+  certColorVerified?: boolean;
+  certVerifiedColor?: string;
+  certVerifiedAt?: string;
+  certVerifySource?: 'auto' | 'manual';
+  useStudioPhoto?: boolean;
 }
 
 export type ColorCategoryFilter = 'all' | 'white' | 'fancy';

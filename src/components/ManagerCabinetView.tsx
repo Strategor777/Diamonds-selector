@@ -15,6 +15,7 @@ import {
   Plus,
   RotateCcw,
   Search,
+  ShieldCheck,
   SlidersHorizontal,
   Trash2,
   X,
@@ -35,6 +36,7 @@ import {
   getFancyDiamondImage,
 } from '../data/diamonds';
 import { getStudioFallbackImage } from '../lib/catalogEngine';
+import { getCalibratedStudioVisual } from '../lib/certVerification';
 import { classifyColorFamily } from '../lib/diamondMapper';
 import type { RegistrySyncProgress } from '../lib/catalogPersistence';
 import type { GoogleAuthErrorInfo } from '../lib/googleAuth';
@@ -48,6 +50,7 @@ import {
   PricingMode,
   SupplierFeed,
 } from '../types/diamond';
+import { CertBatchVerifyModal } from './CertBatchVerifyModal';
 import type { ExcelImportMode } from './ExcelImportModal';
 import { NumericInput } from './NumericInput';
 import { PaginationBar } from './PaginationBar';
@@ -56,6 +59,7 @@ export interface BulkAssortmentPatch {
   directory?: 'white' | 'fancy';
   growthType?: GrowthType;
   supplierName?: string;
+  photoMode?: 'keep' | 'studio' | 'supplier';
   pricingAction?: 'keep' | 'apply' | 'reset-to-cost';
   pricingConfig?: PricingConfig;
 }
@@ -75,6 +79,7 @@ interface ManagerCabinetViewProps {
   onUpdatePricingConfig: (next: PricingConfig) => void;
   onApplyPricingToStones: (stoneIds: string[] | null, config: PricingConfig) => void;
   onUpdateDiamond: (updated: Diamond) => void;
+  onBatchUpdateDiamonds: (updatedList: Diamond[]) => void;
   onAddDiamond: (created: Diamond) => void;
   onDeleteDiamond: (diamondId: string) => void;
   onBulkUpdateAssortment: (stoneIds: string[] | null, patch: BulkAssortmentPatch) => void;
@@ -121,6 +126,7 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
   onUpdatePricingConfig,
   onApplyPricingToStones,
   onUpdateDiamond,
+  onBatchUpdateDiamonds,
   onAddDiamond,
   onDeleteDiamond,
   onBulkUpdateAssortment,
@@ -144,13 +150,15 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
   const [feedbackBanner, setFeedbackBanner] = useState<string | null>(null);
   const [editorDraft, setEditorDraft] = useState<EditorDraft | null>(null);
 
-  // Clear Assortment & Edit Assortment modals
+  // Clear Assortment, Edit Assortment & Batch Cert Verify modals
   const [isClearModalOpen, setIsClearModalOpen] = useState(false);
   const [isEditAssortmentOpen, setIsEditAssortmentOpen] = useState(false);
+  const [isCertVerifyOpen, setIsCertVerifyOpen] = useState(false);
   const [bulkScope, setBulkScope] = useState<'all' | 'filtered'>('filtered');
   const [bulkDirectory, setBulkDirectory] = useState<'keep' | 'white' | 'fancy'>('keep');
   const [bulkGrowthType, setBulkGrowthType] = useState<'keep' | GrowthType>('keep');
   const [bulkSupplierName, setBulkSupplierName] = useState('');
+  const [bulkPhotoMode, setBulkPhotoMode] = useState<'keep' | 'studio' | 'supplier'>('keep');
   const [bulkPricingAction, setBulkPricingAction] = useState<'keep' | 'apply' | 'reset-to-cost'>('keep');
   const [bulkPricingMode, setBulkPricingMode] = useState<PricingMode>(pricingConfig.mode);
   const [bulkPricingValue, setBulkPricingValue] = useState<number>(pricingConfig.value);
@@ -508,11 +516,20 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
               </button>
               <button
                 type="button"
+                onClick={() => setIsCertVerifyOpen(true)}
+                className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-medium rounded-lg border border-[#A7F3D0] bg-[#ECFDF5] text-[#065F46] hover:bg-[#D1FAE5] transition-colors whitespace-nowrap shrink-0"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                Проверить цвета (Сертификаты)
+              </button>
+              <button
+                type="button"
                 onClick={() => {
                   setBulkScope(filteredCatalog.length < catalog.length ? 'filtered' : 'all');
                   setBulkDirectory('keep');
                   setBulkGrowthType('keep');
                   setBulkSupplierName('');
+                  setBulkPhotoMode('keep');
                   setBulkPricingAction('keep');
                   setBulkPricingMode(draftConfig.mode);
                   setBulkPricingValue(draftConfig.value);
@@ -1105,19 +1122,30 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                       ? d.markupValue
                       : draftConfig.value;
 
+                  const studioVis = getCalibratedStudioVisual(d);
+                  const thumbSrc = d.useStudioPhoto ? studioVis.src : d.imageUrl;
+
                   return (
                     <tr key={d.id} className="hover:bg-[#FAFAFA] align-middle">
                       <td className="p-3.5">
                         <div className="flex items-center gap-3">
                           <img
-                            src={d.imageUrl}
+                            src={thumbSrc}
                             alt={d.sku}
                             referrerPolicy="no-referrer"
+                            style={
+                              d.useStudioPhoto && studioVis.filter
+                                ? { filter: studioVis.filter }
+                                : undefined
+                            }
                             onError={(e) => {
-                              const fallback = getStudioFallbackImage(d);
+                              const fallback = studioVis.src || getStudioFallbackImage(d);
                               if (e.currentTarget.src !== fallback && !e.currentTarget.dataset.fb) {
                                 e.currentTarget.dataset.fb = '1';
                                 e.currentTarget.src = fallback;
+                                if (studioVis.filter) {
+                                  e.currentTarget.style.filter = studioVis.filter;
+                                }
                               }
                             }}
                             className="w-11 h-11 rounded object-contain p-0.5 border border-[#E4E6EB] bg-[#F8F9FB] shrink-0"
@@ -1142,6 +1170,11 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                         <div className="text-[11px] font-mono tabular-nums text-[#5A606D] mt-0.5">
                           {Number(d.lengthMm || 0).toFixed(2)}×{Number(d.widthMm || 0).toFixed(2)} мм · {d.certLab || '—'} #
                           {d.certNumber || '—'}
+                          {d.certColorVerified && (
+                            <span className="ml-1.5 font-sans text-[#065F46] font-medium">
+                              · Цвет ✓
+                            </span>
+                          )}
                         </div>
                       </td>
 
@@ -2236,6 +2269,9 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                   if (bulkSupplierName.trim()) {
                     patch.supplierName = bulkSupplierName.trim();
                   }
+                  if (bulkPhotoMode !== 'keep') {
+                    patch.photoMode = bulkPhotoMode;
+                  }
                   if (bulkPricingAction !== 'keep') {
                     patch.pricingAction = bulkPricingAction;
                     if (bulkPricingAction === 'apply') {
@@ -2358,6 +2394,29 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                       <option value="reset-to-cost">Сбросить к входной цене (×1.00)</option>
                     </select>
                   </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="block text-[#5A606D] mb-1">
+                      Отображение фото в карточках
+                    </label>
+                    <select
+                      value={bulkPhotoMode}
+                      onChange={(e) =>
+                        setBulkPhotoMode(
+                          e.target.value as 'keep' | 'studio' | 'supplier'
+                        )
+                      }
+                      className="w-full px-3 py-2 text-xs bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg"
+                    >
+                      <option value="keep">— Не изменять —</option>
+                      <option value="studio">
+                        Использовать студийное фото по цвету, оттенку и форме
+                      </option>
+                      <option value="supplier">
+                        Вернуть оригинальные фото поставщика (если есть)
+                      </option>
+                    </select>
+                  </div>
                 </div>
 
                 {bulkPricingAction === 'apply' && (
@@ -2420,6 +2479,21 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+      {/* Batch Certificate Color Verification Modal */}
+      {isCertVerifyOpen && (
+        <CertBatchVerifyModal
+          open={isCertVerifyOpen}
+          allStones={catalog}
+          filteredStones={filteredCatalog}
+          onClose={() => setIsCertVerifyOpen(false)}
+          onBatchApplyDiamonds={(updatedList) => {
+            onBatchUpdateDiamonds(updatedList);
+            setFeedbackBanner(
+              `Обновлено и подтверждено по сертификатам: ${updatedList.length.toLocaleString('ru-RU')} поз.`
+            );
+          }}
+        />
       )}
     </div>
   );

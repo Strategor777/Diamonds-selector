@@ -16,7 +16,7 @@ import {
   formatStonePrice,
   getColorHexTint,
 } from '../data/diamonds';
-import { getStudioFallbackImage } from '../lib/catalogEngine';
+import { getCalibratedStudioVisual } from '../lib/certVerification';
 import { classifyColorFamily } from '../lib/diamondMapper';
 import { PairAnchorSpec, findMatchedPairs } from '../lib/pairMatcher';
 import {
@@ -675,6 +675,10 @@ export const PairFinderView: React.FC<PairFinderViewProps> = ({
             <div className="space-y-3">
               {matches.map((cand) => {
                 const isSelected = activeCandidate?.diamond.id === cand.diamond.id;
+                const studioVis = getCalibratedStudioVisual(cand.diamond);
+                const thumbSrc = cand.diamond.useStudioPhoto
+                  ? studioVis.src
+                  : cand.diamond.imageUrl;
                 return (
                   <div
                     key={cand.diamond.id}
@@ -686,14 +690,22 @@ export const PairFinderView: React.FC<PairFinderViewProps> = ({
                   >
                     <div className="flex items-center gap-4 min-w-0">
                       <img
-                        src={cand.diamond.imageUrl}
+                        src={thumbSrc}
                         alt={cand.diamond.sku}
                         referrerPolicy="no-referrer"
+                        style={
+                          cand.diamond.useStudioPhoto && studioVis.filter
+                            ? { filter: studioVis.filter }
+                            : undefined
+                        }
                         onError={(e) => {
-                          const fallback = getStudioFallbackImage(cand.diamond);
+                          const fallback = studioVis.src;
                           if (e.currentTarget.src !== fallback && !e.currentTarget.dataset.fb) {
                             e.currentTarget.dataset.fb = '1';
                             e.currentTarget.src = fallback;
+                            if (studioVis.filter) {
+                              e.currentTarget.style.filter = studioVis.filter;
+                            }
                           }
                         }}
                         className="w-14 h-14 rounded object-contain p-1 border border-[#E4E6EB] shrink-0 bg-[#F8F9FB]"

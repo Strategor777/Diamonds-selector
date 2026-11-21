@@ -15,7 +15,7 @@ import {
   formatStonePrice,
   getColorHexTint,
 } from '../data/diamonds';
-import { getStudioFallbackImage } from '../lib/catalogEngine';
+import { getCalibratedStudioVisual } from '../lib/certVerification';
 import { Diamond, OrderRequest, PriceCurrency } from '../types/diamond';
 
 interface CartViewProps {
@@ -333,6 +333,9 @@ export const CartView: React.FC<CartViewProps> = ({
                   ? getColorHexTint(diamond.color, diamond.colorFamily).deep
                   : null;
 
+                const studioVis = getCalibratedStudioVisual(diamond);
+                const thumbSrc = diamond.useStudioPhoto ? studioVis.src : diamond.imageUrl;
+
                 return (
                   <div
                     key={diamond.id}
@@ -345,14 +348,22 @@ export const CartView: React.FC<CartViewProps> = ({
                         className="w-16 h-16 rounded-lg overflow-hidden border border-[#E4E6EB] bg-[#F8F9FB] shrink-0"
                       >
                         <img
-                          src={diamond.imageUrl}
+                          src={thumbSrc}
                           alt={diamond.sku}
                           referrerPolicy="no-referrer"
+                          style={
+                            diamond.useStudioPhoto && studioVis.filter
+                              ? { filter: studioVis.filter }
+                              : undefined
+                          }
                           onError={(e) => {
-                            const fallback = getStudioFallbackImage(diamond);
+                            const fallback = studioVis.src;
                             if (e.currentTarget.src !== fallback && !e.currentTarget.dataset.fb) {
                               e.currentTarget.dataset.fb = '1';
                               e.currentTarget.src = fallback;
+                              if (studioVis.filter) {
+                                e.currentTarget.style.filter = studioVis.filter;
+                              }
                             }
                           }}
                           className="w-full h-full object-contain p-1"

@@ -14,7 +14,7 @@ import {
   formatStonePrice,
   getColorHexTint,
 } from '../data/diamonds';
-import { getStudioFallbackImage } from '../lib/catalogEngine';
+import { getCalibratedStudioVisual } from '../lib/certVerification';
 import {
   isNonImageMediaUrl,
   parseFancyColor,
@@ -45,10 +45,13 @@ export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
   onToggleCart,
   onFindPair,
 }) => {
-  const studioFallbackSrc = getStudioFallbackImage(diamond);
+  const studioVisual = getCalibratedStudioVisual(diamond);
+  const studioFallbackSrc = studioVisual.src;
   const rawSanitized = sanitizeMediaUrl(diamond.imageUrl);
   const primarySrc =
-    rawSanitized && !isNonImageMediaUrl(rawSanitized) ? rawSanitized : undefined;
+    !diamond.useStudioPhoto && rawSanitized && !isNonImageMediaUrl(rawSanitized)
+      ? rawSanitized
+      : undefined;
   const initialStage: 0 | 1 | 2 =
     primarySrc && primarySrc !== studioFallbackSrc ? 0 : 1;
 
@@ -57,9 +60,11 @@ export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
 
   useEffect(() => {
     setImgStage(primarySrc && primarySrc !== studioFallbackSrc ? 0 : 1);
-  }, [diamond.id, primarySrc, studioFallbackSrc]);
+  }, [diamond.id, primarySrc, studioFallbackSrc, diamond.useStudioPhoto]);
 
-  const activeImgSrc = imgStage === 0 ? primarySrc : imgStage === 1 ? studioFallbackSrc : undefined;
+  const activeImgSrc =
+    imgStage === 0 ? primarySrc : imgStage === 1 ? studioFallbackSrc : undefined;
+  const isShowingStudio = imgStage === 1;
 
   const pricePerCarat =
     diamond.carat > 0 ? Math.round(diamond.priceUsd / diamond.carat) : diamond.priceUsd;
@@ -91,6 +96,11 @@ export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
               setImgStage((prev) => (prev === 0 ? 1 : 2));
             }}
             onClick={() => onInspect(diamond, 'photo')}
+            style={
+              isShowingStudio && studioVisual.filter
+                ? { filter: studioVisual.filter }
+                : undefined
+            }
             className="w-full h-full object-contain p-2 cursor-pointer transition-transform duration-300 ease-out group-hover:scale-[1.03]"
           />
         ) : (
@@ -159,6 +169,11 @@ export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
             <span className="font-mono uppercase tracking-wider truncate">
               {diamond.sku}
             </span>
+            {diamond.certColorVerified && (
+              <span className="text-[11px] font-medium text-[#065F46] whitespace-nowrap shrink-0">
+                Цвет {diamond.certLab} ✓
+              </span>
+            )}
           </div>
 
           {/* Primary Title */}

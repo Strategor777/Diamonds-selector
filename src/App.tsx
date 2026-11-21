@@ -959,6 +959,36 @@ export default function App() {
     expandFilterBoundsForDiamonds([updated], false);
   };
 
+  const handleBatchUpdateDiamonds = (updatedList: Diamond[]) => {
+    if (updatedList.length === 0) return;
+    const byId = new Map<string, Diamond>();
+    for (const item of updatedList) {
+      byId.set(item.id, item);
+    }
+    const nextCatalog = catalog.map((d) => byId.get(d.id) || d);
+    const nextSuppliers = rebuildSupplierFeeds(nextCatalog, suppliers);
+    setCatalog(nextCatalog);
+    setSuppliers(nextSuppliers);
+    expandFilterBoundsForDiamonds(updatedList, false);
+
+    void saveLocalRegistry({
+      version: registryVersion,
+      catalog: nextCatalog,
+      suppliers: nextSuppliers,
+      pricingConfig,
+      savedAt: new Date().toISOString(),
+      clearedExplicitly: nextCatalog.length === 0,
+    });
+
+    if (isAdminSignedIn) {
+      void handlePublishToCloud({
+        catalog: nextCatalog,
+        suppliers: nextSuppliers,
+        pricingConfig,
+      });
+    }
+  };
+
   const handleAddDiamond = (created: Diamond) => {
     const tagged: Diamond = {
       ...created,
@@ -1082,6 +1112,12 @@ export default function App() {
       if (cleanSupplier && resolvedSupId) {
         next.supplierId = resolvedSupId;
         next.supplierName = cleanSupplier;
+      }
+
+      if (patch.photoMode === 'studio') {
+        next.useStudioPhoto = true;
+      } else if (patch.photoMode === 'supplier') {
+        next.useStudioPhoto = false;
       }
 
       if (patch.pricingAction === 'apply' && patch.pricingConfig) {
@@ -1446,6 +1482,7 @@ export default function App() {
                   onUpdatePricingConfig={setPricingConfig}
                   onApplyPricingToStones={handleApplyPricingToStones}
                   onUpdateDiamond={handleUpdateDiamond}
+                  onBatchUpdateDiamonds={handleBatchUpdateDiamonds}
                   onAddDiamond={handleAddDiamond}
                   onDeleteDiamond={handleDeleteDiamond}
                   onBulkUpdateAssortment={handleBulkUpdateAssortment}
@@ -1614,6 +1651,7 @@ export default function App() {
           onToggleCompare={handleToggleCompare}
           onToggleCart={handleToggleCart}
           onFindPair={handleFindPair}
+          onUpdateDiamond={handleUpdateDiamond}
         />
       )}
 

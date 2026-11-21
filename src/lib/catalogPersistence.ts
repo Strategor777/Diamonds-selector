@@ -156,6 +156,8 @@ function toCompactPublicStone(d: Diamond): Record<string, unknown> {
   if (d.imageUrl && d.imageUrl.startsWith('http')) item.im = d.imageUrl.slice(0, 400);
   if (d.videoUrl && d.videoUrl.startsWith('http')) item.vd = d.videoUrl.slice(0, 400);
   if (d.supplierId) item.sp = sanitizeId(d.supplierId).slice(0, 64);
+  if (d.certColorVerified) item.cv = 1;
+  if (d.useStudioPhoto) item.us = 1;
 
   return item;
 }
@@ -225,6 +227,9 @@ function fromCompactPublicStone(raw: Record<string, unknown>): Diamond {
     fancyOvertone: typeof raw.fo === 'string' ? raw.fo : undefined,
     primaryHue: directory === 'fancy' ? colorFamily : undefined,
     overtone: typeof raw.fo === 'string' ? raw.fo : undefined,
+    certColorVerified: raw.cv === 1 ? true : undefined,
+    certVerifiedColor: raw.cv === 1 ? color : undefined,
+    useStudioPhoto: raw.us === 1 ? true : undefined,
   };
 }
 
