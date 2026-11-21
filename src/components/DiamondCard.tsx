@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Camera,
   Check,
@@ -14,6 +14,12 @@ import {
   formatStonePrice,
   getColorHexTint,
 } from '../data/diamonds';
+import { getStudioFallbackImage } from '../lib/catalogEngine';
+import {
+  isNonImageMediaUrl,
+  parseFancyColor,
+  sanitizeMediaUrl,
+} from '../lib/fancyColorParser';
 import { Diamond } from '../types/diamond';
 import { DiamondShapeIcon } from './DiamondShapeIcon';
 import { DiamondTurntable360 } from './DiamondTurntable360';
@@ -39,36 +45,53 @@ export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
   onToggleCart,
   onFindPair,
 }) => {
-  const [imgError, setImgError] = useState(false);
+  const studioFallbackSrc = getStudioFallbackImage(diamond);
+  const rawSanitized = sanitizeMediaUrl(diamond.imageUrl);
+  const primarySrc =
+    rawSanitized && !isNonImageMediaUrl(rawSanitized) ? rawSanitized : undefined;
+  const initialStage: 0 | 1 | 2 =
+    primarySrc && primarySrc !== studioFallbackSrc ? 0 : 1;
+
+  const [imgStage, setImgStage] = useState<0 | 1 | 2>(initialStage);
   const [mediaView, setMediaView] = useState<'photo' | 'video'>('photo');
 
-  const pricePerCarat = Math.round(diamond.priceUsd / diamond.carat);
+  useEffect(() => {
+    setImgStage(primarySrc && primarySrc !== studioFallbackSrc ? 0 : 1);
+  }, [diamond.id, primarySrc, studioFallbackSrc]);
+
+  const activeImgSrc = imgStage === 0 ? primarySrc : imgStage === 1 ? studioFallbackSrc : undefined;
+
+  const pricePerCarat =
+    diamond.carat > 0 ? Math.round(diamond.priceUsd / diamond.carat) : diamond.priceUsd;
   const isColoredStone =
     Boolean(diamond.colorFamily) && diamond.colorFamily !== 'Бесцветный (D–J)';
+  const parsedFancy = isColoredStone ? parseFancyColor(diamond.color) : null;
   const colorSwatch = isColoredStone
     ? getColorHexTint(diamond.color, diamond.colorFamily).deep
     : null;
   const stoneTitlePrefix =
-    diamond.stoneType && diamond.stoneType !== 'Бриллиант'
+    diamond.stoneType && diamond.stoneType !== 'Бриллиант' && diamond.stoneType !== 'Цветной бриллиант'
       ? `${diamond.stoneType} · `
       : '';
 
   return (
     <article className="group bg-white border border-[#E4E6EB] rounded-lg overflow-hidden transition-transform duration-200 ease-out hover:-translate-y-0.5 hover:shadow-[0_10px_30px_rgba(17,19,23,0.06)] flex flex-col">
-      {/* Studio Photo / Inline 360° Video Stage */}
-      <div className="relative aspect-[4/3] bg-[#F1F3F5] overflow-hidden">
+      {/* Uncropped 1:1 Square Studio Photo / Inline 360° Video Stage */}
+      <div className="relative aspect-square bg-[#F8F9FB] overflow-hidden border-b border-[#F0F2F5]">
         {mediaView === 'video' ? (
           <DiamondTurntable360 diamond={diamond} compact />
-        ) : !imgError ? (
+        ) : activeImgSrc ? (
           <img
-            src={diamond.imageUrl}
+            src={activeImgSrc}
             alt={`${stoneTitlePrefix}${SHAPE_SHORT_RU[diamond.shape]} ${diamond.carat.toFixed(2)} ct ${diamond.color} ${diamond.clarity}`}
             loading="lazy"
             decoding="async"
             referrerPolicy="no-referrer"
-            onError={() => setImgError(true)}
+            onError={() => {
+              setImgStage((prev) => (prev === 0 ? 1 : 2));
+            }}
             onClick={() => onInspect(diamond, 'photo')}
-            className="w-full h-full object-cover cursor-pointer transition-transform duration-300 ease-out group-hover:scale-[1.03]"
+            className="w-full h-full object-contain p-2 cursor-pointer transition-transform duration-300 ease-out group-hover:scale-[1.03]"
           />
         ) : (
           <button
@@ -159,22 +182,29 @@ export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
                 />
               )}
               <span className="truncate">
-                {diamond.isFancyColor && diamond.fancyIntensity
-                  ? diamond.fancyIntensity
+                {diamond.isFancyColor
+                  ? diamond.fancyIntensity || diamond.colorFamily || diamond.color
                   : diamond.color}{' '}
                 · {diamond.clarity}
               </span>
             </span>
           </div>
 
-          {/* Dedicated Fancy Color Grade Line (Full Hue & Overtone) */}
+          {/* Dedicated Fancy Color Shade Line (distinguishing Color vs Fancy Shade) */}
           {diamond.isFancyColor && (
             <div className="text-xs font-medium text-[#1B365D] leading-snug truncate">
-              {diamond.color}
+              {parsedFancy?.isSpecificShade ? (
+                <>
+                  {parsedFancy.canonicalColor}
+                  {parsedFancy.shortCode ? ` (${parsedFancy.shortCode})` : ''}
+                </>
+              ) : (
+                <>Цвет: {diamond.colorFamily || diamond.color}</>
+              )}
               {diamond.overtone &&
               diamond.overtone !== 'Чистый тон (Pure)' &&
               !diamond.color.toLowerCase().includes(diamond.overtone.toLowerCase())
-                ? ` · Обертон: ${diamond.overtone}`
+                ? ` · ${diamond.overtone}`
                 : ''}
             </div>
           )}

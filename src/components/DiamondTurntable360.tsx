@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, Film, Pause, Play, RotateCw } from 'lucide-react';
 import { getColorHexTint } from '../data/diamonds';
+import { sanitizeMediaUrl } from '../lib/fancyColorParser';
 import { Diamond } from '../types/diamond';
 
 interface DiamondTurntable360Props {
@@ -58,8 +59,13 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
   const [angle, setAngle] = useState(24);
   const [speed, setSpeed] = useState<0.5 | 1 | 2>(1);
   const [externalError, setExternalError] = useState(false);
+  const sanitizedVideoUrl = useMemo(
+    () => sanitizeMediaUrl(diamond.videoUrl),
+    [diamond.videoUrl]
+  );
+
   const [mode, setMode] = useState<'turntable' | 'external'>(
-    diamond.videoUrl ? 'external' : 'turntable'
+    sanitizedVideoUrl ? 'external' : 'turntable'
   );
   const draggingRef = useRef(false);
   const lastXRef = useRef(0);
@@ -67,12 +73,12 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
   // Reset mode and error state when switching stones
   useEffect(() => {
     setExternalError(false);
-    setMode(diamond.videoUrl ? 'external' : 'turntable');
-  }, [diamond.id, diamond.videoUrl]);
+    setMode(sanitizedVideoUrl ? 'external' : 'turntable');
+  }, [diamond.id, sanitizedVideoUrl]);
 
   const directVideo = useMemo(
-    () => (diamond.videoUrl ? isDirectVideoFile(diamond.videoUrl) : false),
-    [diamond.videoUrl]
+    () => (sanitizedVideoUrl ? isDirectVideoFile(sanitizedVideoUrl) : false),
+    [sanitizedVideoUrl]
   );
 
   useEffect(() => {
@@ -99,8 +105,8 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
     if (!ctx) return;
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const logicalW = 560;
-    const logicalH = 420;
+    const logicalW = 500;
+    const logicalH = 500;
     if (canvas.width !== logicalW * dpr || canvas.height !== logicalH * dpr) {
       canvas.width = logicalW * dpr;
       canvas.height = logicalH * dpr;
@@ -454,12 +460,12 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
       }
     >
       {/* Top source switcher when diamond has an external videoUrl */}
-      {diamond.videoUrl && !compact && (
+      {sanitizedVideoUrl && !compact && (
         <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 bg-white border-b border-[#E4E6EB]">
           <div className="flex items-center gap-2 text-xs text-[#5A606D]">
             <span>Источник видео</span>
             <a
-              href={diamond.videoUrl}
+              href={sanitizedVideoUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-[#1B365D] hover:underline font-medium"
@@ -498,12 +504,16 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
         </div>
       )}
 
-      {mode === 'external' && diamond.videoUrl && !externalError ? (
-        <div className="relative aspect-[4/3] w-full h-full bg-[#111317] flex items-center justify-center">
+      {mode === 'external' && sanitizedVideoUrl && !externalError ? (
+        <div
+          className={`relative aspect-square w-full ${
+            compact ? 'h-full' : 'max-h-[480px] mx-auto'
+          } bg-[#F8F9FB] flex items-center justify-center overflow-hidden`}
+        >
           {directVideo ? (
             <video
-              key={diamond.videoUrl}
-              src={diamond.videoUrl}
+              key={sanitizedVideoUrl}
+              src={sanitizedVideoUrl}
               controls={!compact}
               autoPlay
               loop
@@ -513,25 +523,26 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
                 setExternalError(true);
                 setMode('turntable');
               }}
-              className="w-full h-full object-contain"
+              className="w-full h-full object-contain bg-[#F8F9FB]"
             />
           ) : (
             <iframe
-              key={diamond.videoUrl}
-              src={diamond.videoUrl}
+              key={sanitizedVideoUrl}
+              src={sanitizedVideoUrl}
               title={`360 видео ${diamond.sku}`}
               referrerPolicy="no-referrer"
+              allow="fullscreen; autoplay"
               sandbox="allow-scripts allow-same-origin allow-popups"
               onError={() => {
                 setExternalError(true);
                 setMode('turntable');
               }}
-              className="w-full h-full border-0 bg-white"
+              className="w-full h-full border-0 bg-white block"
             />
           )}
 
           {compact ? (
-            <div className="absolute top-3 left-3 flex items-center gap-1.5">
+            <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
               <button
                 type="button"
                 onClick={() => setMode('turntable')}
@@ -540,7 +551,7 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
                 360° модель
               </button>
               <a
-                href={diamond.videoUrl}
+                href={sanitizedVideoUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 title="Открыть внешнее видео в новой вкладке"
@@ -551,9 +562,9 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
             </div>
           ) : !directVideo ? (
             <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between gap-2 px-3 py-1.5 rounded bg-white/92 backdrop-blur-sm border border-[#E4E6EB] text-[11px] text-[#5A606D]">
-              <span>Если 360° плеер поставщика не отображается, откройте ссылку отдельно</span>
+              <span className="truncate">Если 360° плеер поставщика не отображается, откройте ссылку отдельно</span>
               <a
-                href={diamond.videoUrl}
+                href={sanitizedVideoUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 text-[#1B365D] font-medium hover:underline whitespace-nowrap shrink-0"
@@ -564,7 +575,7 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
           ) : null}
         </div>
       ) : (
-        <div className={compact ? 'relative w-full h-full' : 'relative'}>
+        <div className={compact ? 'relative w-full h-full' : 'relative max-h-[480px] mx-auto'}>
           <canvas
             ref={canvasRef}
             onPointerDown={handlePointerDown}
@@ -572,7 +583,7 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
             className={`w-full ${
-              compact ? 'h-full' : 'aspect-[4/3]'
+              compact ? 'h-full' : 'aspect-square max-h-[480px]'
             } cursor-grab active:cursor-grabbing block touch-none`}
           />
           <div className="absolute top-3 left-3 flex items-center gap-2 text-xs text-[#5A606D] bg-white/90 backdrop-blur-sm px-2.5 py-1 rounded border border-[#E4E6EB] pointer-events-none">
@@ -586,11 +597,11 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
             )}
           </div>
 
-          {externalError && diamond.videoUrl && !compact && (
+          {externalError && sanitizedVideoUrl && !compact && (
             <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-2 text-xs bg-white/95 backdrop-blur-sm border border-[#E4E6EB] rounded px-3 py-1.5 text-[#5A606D]">
               <span>Внешнее видео недоступно для встраивания — активен 360° режим</span>
               <a
-                href={diamond.videoUrl}
+                href={sanitizedVideoUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 text-[#1B365D] font-medium hover:underline whitespace-nowrap"

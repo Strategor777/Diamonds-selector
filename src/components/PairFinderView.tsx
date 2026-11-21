@@ -16,6 +16,7 @@ import {
   formatStonePrice,
   getColorHexTint,
 } from '../data/diamonds';
+import { getStudioFallbackImage } from '../lib/catalogEngine';
 import { classifyColorFamily } from '../lib/diamondMapper';
 import { PairAnchorSpec, findMatchedPairs } from '../lib/pairMatcher';
 import {
@@ -688,7 +689,14 @@ export const PairFinderView: React.FC<PairFinderViewProps> = ({
                         src={cand.diamond.imageUrl}
                         alt={cand.diamond.sku}
                         referrerPolicy="no-referrer"
-                        className="w-16 h-12 rounded object-cover border border-[#E4E6EB] shrink-0 bg-[#F1F3F5]"
+                        onError={(e) => {
+                          const fallback = getStudioFallbackImage(cand.diamond);
+                          if (e.currentTarget.src !== fallback && !e.currentTarget.dataset.fb) {
+                            e.currentTarget.dataset.fb = '1';
+                            e.currentTarget.src = fallback;
+                          }
+                        }}
+                        className="w-14 h-14 rounded object-contain p-1 border border-[#E4E6EB] shrink-0 bg-[#F8F9FB]"
                       />
                       <div className="min-w-0 space-y-0.5">
                         <div className="flex items-center gap-2 text-xs text-[#5A606D]">

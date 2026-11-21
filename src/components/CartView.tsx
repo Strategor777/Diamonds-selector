@@ -15,6 +15,7 @@ import {
   formatStonePrice,
   getColorHexTint,
 } from '../data/diamonds';
+import { getStudioFallbackImage } from '../lib/catalogEngine';
 import { Diamond, OrderRequest, PriceCurrency } from '../types/diamond';
 
 interface CartViewProps {
@@ -341,13 +342,20 @@ export const CartView: React.FC<CartViewProps> = ({
                       <button
                         type="button"
                         onClick={() => onInspect(diamond, 'photo')}
-                        className="w-20 h-16 rounded-lg overflow-hidden border border-[#E4E6EB] bg-[#F1F3F5] shrink-0"
+                        className="w-16 h-16 rounded-lg overflow-hidden border border-[#E4E6EB] bg-[#F8F9FB] shrink-0"
                       >
                         <img
                           src={diamond.imageUrl}
                           alt={diamond.sku}
                           referrerPolicy="no-referrer"
-                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            const fallback = getStudioFallbackImage(diamond);
+                            if (e.currentTarget.src !== fallback && !e.currentTarget.dataset.fb) {
+                              e.currentTarget.dataset.fb = '1';
+                              e.currentTarget.src = fallback;
+                            }
+                          }}
+                          className="w-full h-full object-contain p-1"
                         />
                       </button>
 

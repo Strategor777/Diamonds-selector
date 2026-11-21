@@ -27,6 +27,7 @@ import {
   deduplicateDiamonds,
   filterAndSortCatalog,
   isFancyDiamond,
+  normalizeCatalogDiamonds,
   rebuildSupplierFeeds,
 } from './lib/catalogEngine';
 import {
@@ -441,18 +442,19 @@ export default function App() {
 
       if (localSnap && (localSnap.catalog.length > 0 || localSnap.clearedExplicitly)) {
         localVersion = localSnap.version || 0;
+        const normalizedLocal = normalizeCatalogDiamonds(localSnap.catalog);
         const hydratedSuppliers =
           localSnap.suppliers && localSnap.suppliers.length > 0
-            ? rebuildSupplierFeeds(localSnap.catalog, localSnap.suppliers)
-            : rebuildSupplierFeeds(localSnap.catalog, []);
-        setCatalog(localSnap.catalog);
+            ? rebuildSupplierFeeds(normalizedLocal, localSnap.suppliers)
+            : rebuildSupplierFeeds(normalizedLocal, []);
+        setCatalog(normalizedLocal);
         setSuppliers(hydratedSuppliers);
         if (localSnap.pricingConfig) {
           setPricingConfig(localSnap.pricingConfig);
         }
         setRegistryVersion(localVersion);
-        if (localSnap.catalog.length > 0) {
-          const bounds = computeCatalogBounds(localSnap.catalog, DEFAULT_FILTERS);
+        if (normalizedLocal.length > 0) {
+          const bounds = computeCatalogBounds(normalizedLocal, DEFAULT_FILTERS);
           setFilters((prev) => ({
             ...prev,
             minCarat: Math.min(prev.minCarat, bounds.minCarat),
@@ -473,15 +475,16 @@ export default function App() {
         if (!active || !cloudSnap) return;
 
         if (cloudSnap.version > localVersion) {
+          const normalizedCloud = normalizeCatalogDiamonds(cloudSnap.catalog);
           const nextSuppliers = rebuildSupplierFeeds(
-            cloudSnap.catalog,
+            normalizedCloud,
             localSnap?.suppliers || []
           );
-          setCatalog(cloudSnap.catalog);
+          setCatalog(normalizedCloud);
           setSuppliers(nextSuppliers);
           setRegistryVersion(cloudSnap.version);
-          if (cloudSnap.catalog.length > 0) {
-            const bounds = computeCatalogBounds(cloudSnap.catalog, DEFAULT_FILTERS);
+          if (normalizedCloud.length > 0) {
+            const bounds = computeCatalogBounds(normalizedCloud, DEFAULT_FILTERS);
             setFilters((prev) => ({
               ...prev,
               minCarat: Math.min(prev.minCarat, bounds.minCarat),
@@ -492,11 +495,11 @@ export default function App() {
           }
           void saveLocalRegistry({
             version: cloudSnap.version,
-            catalog: cloudSnap.catalog,
+            catalog: normalizedCloud,
             suppliers: nextSuppliers,
             pricingConfig: localSnap?.pricingConfig || DEFAULT_PRICING_CONFIG,
             savedAt: new Date().toISOString(),
-            clearedExplicitly: cloudSnap.catalog.length === 0,
+            clearedExplicitly: normalizedCloud.length === 0,
           });
         }
       } catch (err) {
@@ -523,11 +526,12 @@ export default function App() {
         if (!active || !cloudAdmin) return;
 
         if (cloudAdmin.version > registryVersion) {
+          const normalizedAdmin = normalizeCatalogDiamonds(cloudAdmin.catalog);
           const nextSup =
             cloudAdmin.suppliers && cloudAdmin.suppliers.length > 0
-              ? rebuildSupplierFeeds(cloudAdmin.catalog, cloudAdmin.suppliers)
-              : rebuildSupplierFeeds(cloudAdmin.catalog, suppliers);
-          setCatalog(cloudAdmin.catalog);
+              ? rebuildSupplierFeeds(normalizedAdmin, cloudAdmin.suppliers)
+              : rebuildSupplierFeeds(normalizedAdmin, suppliers);
+          setCatalog(normalizedAdmin);
           setSuppliers(nextSup);
           if (cloudAdmin.pricingConfig) {
             setPricingConfig(cloudAdmin.pricingConfig);

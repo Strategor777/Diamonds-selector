@@ -32,7 +32,14 @@ export function extractSheetRowsFast(
     const addr = keys[k];
     if (addr.charCodeAt(0) === 33) continue; // skip '!ref', '!merges', etc.
     const cell = worksheet[addr] as XLSXType.CellObject | undefined;
-    const linkTarget = cell?.l?.Target ? String(cell.l.Target).trim() : '';
+    let linkTarget = cell?.l?.Target ? String(cell.l.Target).trim() : '';
+    if (!linkTarget && cell?.f) {
+      const formulaStr = String(cell.f);
+      const match = formulaStr.match(/HYPERLINK\s*\(\s*["'](https?:\/\/[^"']+)["']/i);
+      if (match) {
+        linkTarget = match[1].trim();
+      }
+    }
     if (
       linkTarget &&
       (linkTarget.startsWith('http://') || linkTarget.startsWith('https://'))
@@ -89,7 +96,7 @@ export async function parseExcelBuffer(
   const workbook = XLSX.read(buffer, {
     type: 'array',
     dense: false,
-    cellFormula: false,
+    cellFormula: true,
     cellHTML: false,
     cellStyles: false,
   });

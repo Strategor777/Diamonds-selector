@@ -34,6 +34,7 @@ import {
   getEffectiveCostPrice,
   getFancyDiamondImage,
 } from '../data/diamonds';
+import { getStudioFallbackImage } from '../lib/catalogEngine';
 import { classifyColorFamily } from '../lib/diamondMapper';
 import type { RegistrySyncProgress } from '../lib/catalogPersistence';
 import type { GoogleAuthErrorInfo } from '../lib/googleAuth';
@@ -1112,7 +1113,14 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                             src={d.imageUrl}
                             alt={d.sku}
                             referrerPolicy="no-referrer"
-                            className="w-12 h-9 rounded object-cover border border-[#E4E6EB] bg-[#F1F3F5] shrink-0"
+                            onError={(e) => {
+                              const fallback = getStudioFallbackImage(d);
+                              if (e.currentTarget.src !== fallback && !e.currentTarget.dataset.fb) {
+                                e.currentTarget.dataset.fb = '1';
+                                e.currentTarget.src = fallback;
+                              }
+                            }}
+                            className="w-11 h-11 rounded object-contain p-0.5 border border-[#E4E6EB] bg-[#F8F9FB] shrink-0"
                           />
                           <div className="min-w-0">
                             <div className="font-mono font-semibold text-[#111317] truncate">

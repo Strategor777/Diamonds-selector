@@ -1,6 +1,8 @@
 import {
+  SHAPE_IMAGE_MAP,
   SHAPE_SHORT_RU,
   extractFancyIntensity,
+  getFancyDiamondImage,
 } from '../data/diamonds';
 import {
   Diamond,
@@ -9,6 +11,12 @@ import {
   SupplierFeed,
 } from '../types/diamond';
 import { isWhiteDiamondColorGrade } from './diamondMapper';
+import {
+  isNonImageMediaUrl,
+  isStrictWhiteLetterGrade,
+  parseFancyColor,
+  sanitizeMediaUrl,
+} from './fancyColorParser';
 
 export interface CatalogIndex {
   searchTokens: string[];
@@ -79,10 +87,12 @@ export function buildCatalogIndex(catalog: Diamond[]): CatalogIndex {
   for (let i = 0; i < len; i++) {
     const d = catalog[i];
     const shapeRu = SHAPE_SHORT_RU[d.shape] || d.shape;
+    const isFancy = isFancyDiamond(d);
+    const shortCode = isFancy ? parseFancyColor(d.color).shortCode || '' : '';
     searchTokens[i] =
-      `${d.sku || ''}\u0001${d.certNumber || ''}\u0001${shapeRu}\u0001${d.stoneType || ''}\u0001${d.color || ''}\u0001${d.colorFamily || ''}\u0001${d.certLab || ''}`.toLowerCase();
+      `${d.sku || ''}\u0001${d.certNumber || ''}\u0001${shapeRu}\u0001${d.stoneType || ''}\u0001${d.color || ''}\u0001${shortCode}\u0001${d.colorFamily || ''}\u0001${d.certLab || ''}`.toLowerCase();
 
-    if (isFancyDiamond(d)) {
+    if (isFancy) {
       fancyFlags[i] = 1;
       fancyCount++;
     }
@@ -298,7 +308,7 @@ export function filterAndSortCatalog(
     }
     if (intensitySet) {
       const intensity = d.fancyIntensity || extractFancyIntensity(d.color);
-      if (!intensitySet.has(intensity)) return;
+      if (!intensity || !intensitySet.has(intensity)) return;
     }
     if (colorSet && !colorSet.has(d.color)) return;
     if (claritySet && !claritySet.has(d.clarity)) return;
@@ -497,3 +507,127 @@ export function rebuildSupplierFeeds(
 
   return next.sort((a, b) => b.stoneCount - a.stoneCount);
 }
+
+export function getStudioFallbackImage(
+  diamond: Pick<Diamond, 'color' | 'colorFamily' | 'shape' | 'directory' | 'isFancyColor'>
+): string {
+  const isFancy =
+    diamond.directory === 'fancy' ||
+    Boolean(diamond.isFancyColor) ||
+    (Boolean(diamond.colorFamily) && diamond.colorFamily !== 'Бесцветный (D–J)');
+  if (isFancy) {
+    return getFancyDiamondImage(diamond.color, diamond.colorFamily, diamond.shape);
+  }
+  return SHAPE_IMAGE_MAP[diamond.shape] || SHAPE_IMAGE_MAP.Round;
+}
+
+/**
+ * Fast O(n) catalog normalization pass run on hydration from IndexedDB / Firestore
+ * so already-persisted catalogs immediately get:
+ *  - Normalized GIA fancy color shades (FIP -> Fancy Intense Pink, FVB -> Fancy Vivid Blue, etc.)
+ *  - Accurate fancyIntensity (no false "Fancy" stamp on bare "PINK"/"BROWN" stones)
+ *  - Accurate colorFamily
+ *  - Sanitized https:// imageUrl & videoUrl (and non-image viewer URLs routed to videoUrl)
+ */
+export function normalizeCatalogDiamonds(catalog: Diamond[]): Diamond[] {
+  let anyChanged = false;
+  const out = new Array<Diamond>(catalog.length);
+
+  for (let i = 0; i < catalog.length; i++) {
+    const d = catalog[i];
+    const trimmedColor = (d.color || '').trim();
+    const isWhiteLetter = isStrictWhiteLetterGrade(trimmedColor);
+
+    let nextColor = d.color;
+    let nextColorFamily = d.colorFamily;
+    let nextIntensity = d.fancyIntensity;
+    let nextOvertone = d.fancyOvertone;
+    let nextIsFancy = d.isFancyColor;
+    let nextDirectory = d.directory;
+
+    const treatsAsFancy =
+      !isWhiteLetter &&
+      (d.directory === 'fancy' ||
+        d.isFancyColor ||
+        (Boolean(d.colorFamily) && d.colorFamily !== 'Бесцветный (D–J)') ||
+        trimmedColor.length > 2);
+
+    if (treatsAsFancy) {
+      const parsed = parseFancyColor(trimmedColor);
+      nextColor = parsed.canonicalColor;
+      nextColorFamily = parsed.colorFamily;
+      nextIntensity = parsed.fancyIntensity;
+      nextOvertone = parsed.fancyOvertone;
+      nextIsFancy = true;
+      nextDirectory = 'fancy';
+    }
+
+    let nextImageUrl = d.imageUrl;
+    let nextVideoUrl = d.videoUrl ? sanitizeMediaUrl(d.videoUrl) : undefined;
+
+    if (nextImageUrl && !nextImageUrl.startsWith('/')) {
+      const sanitizedImg = sanitizeMediaUrl(nextImageUrl);
+      if (!sanitizedImg) {
+        nextImageUrl = getStudioFallbackImage({
+          color: nextColor,
+          colorFamily: nextColorFamily,
+          shape: d.shape,
+          directory: nextDirectory,
+          isFancyColor: nextIsFancy,
+        });
+      } else if (isNonImageMediaUrl(sanitizedImg)) {
+        if (!nextVideoUrl) {
+          nextVideoUrl = sanitizedImg;
+        }
+        nextImageUrl = getStudioFallbackImage({
+          color: nextColor,
+          colorFamily: nextColorFamily,
+          shape: d.shape,
+          directory: nextDirectory,
+          isFancyColor: nextIsFancy,
+        });
+      } else {
+        nextImageUrl = sanitizedImg;
+      }
+    } else if (!nextImageUrl) {
+      nextImageUrl = getStudioFallbackImage({
+        color: nextColor,
+        colorFamily: nextColorFamily,
+        shape: d.shape,
+        directory: nextDirectory,
+        isFancyColor: nextIsFancy,
+      });
+    }
+
+    if (
+      nextColor !== d.color ||
+      nextColorFamily !== d.colorFamily ||
+      nextIntensity !== d.fancyIntensity ||
+      nextOvertone !== d.fancyOvertone ||
+      nextIsFancy !== d.isFancyColor ||
+      nextDirectory !== d.directory ||
+      nextImageUrl !== d.imageUrl ||
+      nextVideoUrl !== d.videoUrl
+    ) {
+      anyChanged = true;
+      out[i] = {
+        ...d,
+        color: nextColor,
+        colorFamily: nextColorFamily,
+        fancyIntensity: nextIntensity,
+        fancyOvertone: nextOvertone,
+        overtone: nextOvertone,
+        primaryHue: nextIsFancy ? nextColorFamily : d.primaryHue,
+        isFancyColor: nextIsFancy,
+        directory: nextDirectory,
+        imageUrl: nextImageUrl,
+        videoUrl: nextVideoUrl,
+      };
+    } else {
+      out[i] = d;
+    }
+  }
+
+  return anyChanged ? out : catalog;
+}
+

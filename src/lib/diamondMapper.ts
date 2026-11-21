@@ -20,6 +20,12 @@ import {
   PriceCurrency,
   PricingConfig,
 } from '../types/diamond';
+import {
+  isNonImageMediaUrl,
+  isStrictWhiteLetterGrade,
+  parseFancyColor,
+  sanitizeMediaUrl,
+} from './fancyColorParser';
 
 export interface ColumnMapping {
   sku: number;
@@ -169,21 +175,104 @@ const HEADER_RULES: Record<
       'price',
       'price_usd',
       'total price',
-      'total',
+      'total_price',
+      'totalprice',
       'total $',
+      'total usd',
+      'total_usd',
+      'total amount',
+      'total value',
+      'net amount',
+      'net value',
+      'net total',
       'amount',
       'цена',
       'стоимость',
+      'итого',
+      'итоговая цена',
       'цена $',
       'цена руб',
       'цена ₽',
     ],
-    partial: ['total price', 'price_usd', 'total $', 'итогов', 'стоимост', 'цена'],
-    exclude: ['per', '/ct', 'за карат', 'previous', 'old', 'старая', 'rap'],
+    partial: ['total price', 'total_price', 'price_usd', 'total $', 'total usd', 'net amount', 'net value', 'итогов', 'стоимост', 'цена'],
+    exclude: [
+      'per',
+      '/ct',
+      '/carat',
+      'price_ct',
+      'price ct',
+      'rate',
+      'за карат',
+      '/карат',
+      '/кт',
+      'ppc',
+      'previous',
+      'old',
+      'старая',
+      'rap',
+      'rapaport',
+      'disc',
+      'discount',
+      'depth',
+      'глубин',
+      'pcs',
+      'qty',
+      'count',
+      'кол',
+    ],
   },
   pricePerCarat: {
-    exact: ['price/ct', 'price per carat', 'ppc', '$/ct', 'цена за карат', 'цена/ct'],
-    partial: ['per carat', '/ct', 'за карат', 'ppc'],
+    exact: [
+      'price/ct',
+      'price / ct',
+      'price/carat',
+      'price / carat',
+      'price per carat',
+      'price_per_carat',
+      'pricepercarat',
+      'price per ct',
+      'price_ct',
+      'price ct',
+      'ppc',
+      '$/ct',
+      '$/carat',
+      'usd/ct',
+      'usd/carat',
+      'rate',
+      'net rate',
+      'net_rate',
+      'rate/ct',
+      'rate / ct',
+      'per ct',
+      'per carat',
+      'pr/ct',
+      'carat price',
+      'net price/ct',
+      'asking/ct',
+      'цена за карат',
+      'цена/ct',
+      'цена/карат',
+      'цена / карат',
+      'цена/кт',
+      '$/кт',
+      'за карат',
+      'руб/кт',
+      'руб/карат',
+    ],
+    partial: [
+      'per carat',
+      'per ct',
+      '/ct',
+      '/carat',
+      'price_ct',
+      'price/ct',
+      'ppc',
+      'rate',
+      'за карат',
+      '/карат',
+      '/кт',
+    ],
+    exclude: ['total', 'amount', 'итог', 'rap', 'rapaport', 'disc', 'discount', 'скидк', 'back', '%'],
   },
   previousPriceUsd: {
     exact: ['previous_price_usd', 'previous price', 'old price', 'старая цена'],
@@ -512,6 +601,28 @@ export function analyzeColumns(
 
   inferColumnsFromContent(rows, headerRowIndex, mapping, reasons);
 
+  // Guard: if priceUsd accidentally matched a quantity/flag/percentage column (values <= 2 or with '%'),
+  // unassign it so pricePerCarat * carat computes the real entry cost.
+  if (mapping.priceUsd >= 0 && rows.length > headerRowIndex + 1) {
+    const sampleEnd = Math.min(rows.length, headerRowIndex + 16);
+    const priceSamples: string[] = [];
+    for (let r = headerRowIndex + 1; r < sampleEnd; r++) {
+      const v = rows[r]?.[mapping.priceUsd]?.trim();
+      if (v) priceSamples.push(v);
+    }
+    if (priceSamples.length > 0) {
+      const badCount = priceSamples.filter((v) => {
+        if (v.includes('%')) return true;
+        const n = parseNumeric(v, 0, { thousandsComma: true });
+        return n > 0 && n <= 2;
+      }).length;
+      if (badCount / priceSamples.length >= 0.8) {
+        mapping.priceUsd = -1;
+        reasons.priceUsd = 'none';
+      }
+    }
+  }
+
   const sampleRow = rows[headerRowIndex + 1] || [];
   (Object.keys(mapping) as (keyof ColumnMapping)[]).forEach((key) => {
     const col = mapping[key];
@@ -675,50 +786,14 @@ export function normalizeShape(val: string | undefined): DiamondShape {
 
 export function classifyColorFamily(colorText: string): string {
   const upper = colorText.trim().toUpperCase();
-  if (ALL_COLORS.includes(upper as any)) {
+  if (ALL_COLORS.includes(upper as any) || isStrictWhiteLetterGrade(colorText)) {
     return 'Бесцветный (D–J)';
   }
   const low = colorText.trim().toLowerCase();
-  if (low.includes('хамелеон') || low.includes('chameleon')) {
-    return 'Хамелеон';
-  }
-  if (low.includes('жёлт') || low.includes('желт') || low.includes('yellow') || low.includes('canary') || low.includes('lemon')) {
-    return 'Жёлтый';
-  }
-  if (low.includes('розов') || low.includes('pink') || low.includes('rose')) {
-    return 'Розовый';
-  }
-  if (low.includes('красн') || low.includes('рубин') || low.includes('red') || low.includes('ruby') || low.includes('pigeon')) {
-    return 'Красный';
-  }
-  if (low.includes('син') || low.includes('голуб') || low.includes('сапфир') || low.includes('blue') || low.includes('aqua') || low.includes('cornflower') || low.includes('royal')) {
-    return 'Синий / Голубой';
-  }
-  if (low.includes('зел') || low.includes('изумруд') || low.includes('green') || low.includes('mint')) {
-    return 'Зелёный';
-  }
-  if (low.includes('оранж') || low.includes('orange') || low.includes('padparadscha')) {
-    return 'Оранжевый';
-  }
-  if (low.includes('фиолет') || low.includes('пурпур') || low.includes('сирен') || low.includes('purple') || low.includes('violet') || low.includes('lavender')) {
-    return 'Фиолетовый';
-  }
-  if (low.includes('корич') || low.includes('brown')) {
-    return 'Коричневый';
-  }
-  if (low.includes('коньяч') || low.includes('шампан') || low.includes('champagne') || low.includes('cognac')) {
-    return 'Коньячный / Шампань';
-  }
-  if (low.includes('чёрн') || low.includes('черн') || low.includes('black')) {
-    return 'Чёрный';
-  }
-  if (low.includes('сер') || low.includes('gray') || low.includes('grey')) {
-    return 'Серый';
-  }
-  if (low.includes('бел') || low.includes('бесцв') || low.includes('white') || low.includes('colorless')) {
+  if (low === 'white' || low === 'colorless' || low.startsWith('бесцв') || low === 'белый') {
     return 'Бесцветный (D–J)';
   }
-  return 'Фантазийный';
+  return parseFancyColor(colorText).colorFamily;
 }
 
 const FANCY_HUE_PATTERN =
@@ -726,19 +801,18 @@ const FANCY_HUE_PATTERN =
 
 /**
  * Returns true if the color string represents a standard white/near-colorless
- * GIA letter grade (D, E, F, G, H, I, J, K, L, M, ... including ranges like D-E, F+, G/H)
- * without any fancy/colored hue modifiers.
+ * GIA letter grade (D, E, F, G, H, I, J, K, L, M, ... including adjacent ranges like D-E, F+, G/H)
+ * without any fancy/colored hue modifiers or trade fancy abbreviations (like FY, FIP, F-Y).
  */
 export function isWhiteDiamondColorGrade(rawColor: string | undefined): boolean {
   const cleaned = (rawColor || '').trim();
   if (!cleaned) return false;
   if (FANCY_HUE_PATTERN.test(cleaned)) return false;
 
-  const upper = cleaned.toUpperCase();
-  // Exact single GIA letter grade D..Z or with +/- modifier or range D-E, F/G
-  if (/^[D-Z]([+-])?(\s*[-/]\s*[D-Z]([+-])?)?$/.test(upper)) {
+  if (isStrictWhiteLetterGrade(cleaned)) {
     return true;
   }
+
   // Common textual equivalents without fancy hue words
   if (/^(COLORLESS|NEAR\s*COLORLESS|WHITE|БЕСЦВЕТН\S*|БЕЛЫЙ|БЕЛ\.?)$/i.test(cleaned)) {
     return true;
@@ -749,7 +823,13 @@ export function isWhiteDiamondColorGrade(rawColor: string | undefined): boolean 
 export function normalizeColoredStoneColor(
   rawColor: string | undefined,
   rawFancy: string | undefined
-): { color: DiamondColor; colorFamily: string; isWhiteLetterGrade: boolean } {
+): {
+  color: DiamondColor;
+  colorFamily: string;
+  isWhiteLetterGrade: boolean;
+  fancyIntensity?: string;
+  fancyOvertone?: string;
+} {
   const c = (rawColor || '').trim();
   const f = (rawFancy || '').trim();
 
@@ -783,11 +863,14 @@ export function normalizeColoredStoneColor(
     };
   }
 
-  // Otherwise preserve the rich colored stone hue / fancy description
+  // Parse GIA / RapNet trade codes (FIP, F V B, FVOP, Intensepink, FANCY INTENSE PINK, etc.)
+  const parsed = parseFancyColor(combined);
   return {
-    color: combined,
-    colorFamily: classifyColorFamily(combined),
+    color: parsed.canonicalColor,
+    colorFamily: parsed.colorFamily,
     isWhiteLetterGrade: false,
+    fancyIntensity: parsed.fancyIntensity,
+    fancyOvertone: parsed.fancyOvertone,
   };
 }
 
@@ -814,12 +897,45 @@ export function normalizeLab(val: string | undefined): CertLab {
   return raw;
 }
 
-export function parseNumeric(val: string | undefined, fallback: number): number {
+export function parseNumeric(
+  val: string | undefined,
+  fallback: number,
+  options?: { thousandsComma?: boolean }
+): number {
   if (!val) return fallback;
-  const cleaned = String(val)
-    .replace(/\s+/g, '')
-    .replace(/[$€₽%ct]/gi, '')
-    .replace(',', '.');
+  let cleaned = String(val)
+    .replace(/[\s\u00A0]+/g, '')
+    .replace(/[$€₽%]/g, '')
+    .replace(/ct(s)?$/i, '')
+    .replace(/usd|eur|rub|руб\.?/gi, '');
+
+  const hasComma = cleaned.includes(',');
+  const hasDot = cleaned.includes('.');
+
+  if (hasComma && hasDot) {
+    // Whichever appears last is the decimal separator (e.g. "1,250.50" vs "1.250,50")
+    if (cleaned.lastIndexOf(',') > cleaned.lastIndexOf('.')) {
+      cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+    } else {
+      cleaned = cleaned.replace(/,/g, '');
+    }
+  } else if (hasComma) {
+    const commaParts = cleaned.split(',');
+    if (commaParts.length > 2) {
+      // Multiple commas like "1,250,000" -> thousands separators
+      cleaned = cleaned.replace(/,/g, '');
+    } else if (
+      options?.thousandsComma &&
+      /^-?\d{1,3},\d{3}$/.test(cleaned)
+    ) {
+      // Price formatted as "1,450" -> 1450 (not 1.45!)
+      cleaned = cleaned.replace(',', '');
+    } else {
+      // Decimal comma like "1,52" or "61,8"
+      cleaned = cleaned.replace(',', '.');
+    }
+  }
+
   const match = cleaned.match(/-?\d+(\.\d+)?/);
   if (!match) return fallback;
   const parsed = parseFloat(match[0]);
@@ -925,7 +1041,13 @@ export function mapRowsToDiamonds(
     const rawStoneType =
       cell(row, mapping.stoneType) || options?.defaultStoneType || undefined;
     const shape = normalizeShape(cell(row, mapping.shape));
-    const { color, colorFamily, isWhiteLetterGrade } = normalizeColoredStoneColor(
+    const {
+      color,
+      colorFamily,
+      isWhiteLetterGrade,
+      fancyIntensity: parsedIntensity,
+      fancyOvertone: parsedOvertone,
+    } = normalizeColoredStoneColor(
       cell(row, mapping.color),
       cell(row, mapping.fancyColor)
     );
@@ -954,21 +1076,31 @@ export function mapRowsToDiamonds(
           : rawStoneType;
 
     const fancyIntensity =
-      directory === 'fancy' ? extractFancyIntensity(color) : undefined;
+      directory === 'fancy' ? parsedIntensity ?? extractFancyIntensity(color) : undefined;
     const fancyOvertone =
-      directory === 'fancy' ? extractFancyOvertone(color) : undefined;
+      directory === 'fancy' ? parsedOvertone ?? extractFancyOvertone(color) : undefined;
 
     const rawPriceText = cell(row, mapping.priceUsd) || cell(row, mapping.pricePerCarat);
     const currency = detectCurrency(priceHeader, rawPriceText);
 
-    const totalPriceRaw = parseNumeric(cell(row, mapping.priceUsd), 0);
-    const ppcRaw = parseNumeric(cell(row, mapping.pricePerCarat), 0);
-    const costPriceUsd =
-      totalPriceRaw > 0
+    const totalPriceRaw = parseNumeric(cell(row, mapping.priceUsd), 0, {
+      thousandsComma: true,
+    });
+    const ppcRaw = parseNumeric(cell(row, mapping.pricePerCarat), 0, {
+      thousandsComma: true,
+    });
+    // When only price-per-carat is supplied (or total price is missing / placeholder <= 5 while ppc exists),
+    // compute exact entry cost as pricePerCarat * carat.
+    const usePerCaratFormula =
+      ppcRaw > 0 &&
+      (totalPriceRaw <= 0 ||
+        totalPriceRaw <= 5 ||
+        totalPriceRaw < ppcRaw * carat * 0.25);
+    const costPriceUsd = usePerCaratFormula
+      ? Math.round(ppcRaw * carat)
+      : totalPriceRaw > 0
         ? Math.round(totalPriceRaw)
-        : ppcRaw > 0
-          ? Math.round(ppcRaw * carat)
-          : Math.round(carat * 4500);
+        : Math.round(carat * 4500);
 
     const activePricing = options?.pricingConfig || DEFAULT_PRICING_CONFIG;
     const useMarkup = activePricing.applyOnImport;
@@ -983,7 +1115,9 @@ export function mapRowsToDiamonds(
         )
       : costPriceUsd;
 
-    const prevRaw = parseNumeric(cell(row, mapping.previousPriceUsd), 0);
+    const prevRaw = parseNumeric(cell(row, mapping.previousPriceUsd), 0, {
+      thousandsComma: true,
+    });
     const previousPriceUsd = prevRaw > priceUsd ? Math.round(prevRaw) : undefined;
 
     const certLab = normalizeLab(cell(row, mapping.certLab));
@@ -1062,17 +1196,27 @@ export function mapRowsToDiamonds(
           ? 'Faint'
           : 'None';
 
-    const normalizeUrl = (val: string | undefined): string | undefined => {
-      if (!val) return undefined;
-      const t = val.trim();
-      if (!t) return undefined;
-      if (t.startsWith('http://') || t.startsWith('https://')) return t;
-      if (t.startsWith('www.')) return `https://${t}`;
-      return undefined;
-    };
+    let rawPhoto = sanitizeMediaUrl(cell(row, mapping.imageUrl));
+    let rawVideo = sanitizeMediaUrl(cell(row, mapping.videoUrl));
 
-    const rawPhoto = normalizeUrl(cell(row, mapping.imageUrl));
-    const rawVideo = normalizeUrl(cell(row, mapping.videoUrl));
+    // If the Photo column actually contains a 360° viewer / video / HTML URL,
+    // move it to videoUrl so cards don't attempt to render HTML inside <img>.
+    if (rawPhoto && isNonImageMediaUrl(rawPhoto)) {
+      if (!rawVideo) {
+        rawVideo = rawPhoto;
+      }
+      rawPhoto = undefined;
+    }
+
+    // Conversely, if the Video column contains a direct image file and Photo is empty
+    if (
+      !rawPhoto &&
+      rawVideo &&
+      /\.(jpg|jpeg|png|webp|gif|avif)(\?.*)?$/i.test(rawVideo)
+    ) {
+      rawPhoto = rawVideo;
+      rawVideo = undefined;
+    }
 
     const sku =
       cell(row, mapping.sku) ||

@@ -18,11 +18,11 @@ import {
   SHAPE_SHORT_RU,
   SPECIALTY_SHAPES,
   STANDARD_SHAPES,
-  extractFancyIntensity,
   formatStonePrice,
   getColorHexTint,
 } from '../data/diamonds';
 import { isFancyDiamond } from '../lib/catalogEngine';
+import { parseFancyColor } from '../lib/fancyColorParser';
 import {
   ColorCategoryFilter,
   CutGrade,
@@ -163,7 +163,7 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
   const facets = useMemo(() => {
     const coloredFamilyCounts = new Map<string, number>();
     const fancyIntensityCounts = new Map<string, number>();
-    const fancyColorsSet = new Set<string>();
+    const fancyShadeCounts = new Map<string, { count: number; shortCode?: string }>();
     const claritiesSet = new Set<string>();
     const labsSet = new Set<string>(BASE_LABS);
     const shapeCounts = new Map<DiamondShape, number>();
@@ -195,13 +195,29 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
       }
 
       if (fancy) {
-        const intensity = d.fancyIntensity || extractFancyIntensity(d.color);
-        fancyIntensityCounts.set(
-          intensity,
-          (fancyIntensityCounts.get(intensity) || 0) + 1
-        );
-        if (!WHITE_COLOR_SET.has(d.color.toUpperCase())) {
-          fancyColorsSet.add(d.color);
+        const parsed = parseFancyColor(d.color);
+        const intensity = d.fancyIntensity || parsed.fancyIntensity;
+        if (intensity) {
+          fancyIntensityCounts.set(
+            intensity,
+            (fancyIntensityCounts.get(intensity) || 0) + 1
+          );
+        }
+        // Only include true Fancy shades (e.g. "Fancy Intense Pink" / FIP, "Pinkish Brown"),
+        // NEVER bare base colors like "Pink", "Blue", "Brown", "Yellow", "Black", "Gray"
+        if (
+          parsed.isSpecificShade &&
+          !WHITE_COLOR_SET.has(parsed.canonicalColor.toUpperCase())
+        ) {
+          const prev = fancyShadeCounts.get(parsed.canonicalColor);
+          if (prev) {
+            prev.count++;
+          } else {
+            fancyShadeCounts.set(parsed.canonicalColor, {
+              count: 1,
+              shortCode: parsed.shortCode,
+            });
+          }
         }
       }
 
@@ -234,6 +250,14 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
     );
     const orderedColorFamilies = [...ALL_FANCY_SHADES, ...extraColorFamilies];
 
+    const sortedFancyShades = Array.from(fancyShadeCounts.entries())
+      .map(([label, meta]) => ({
+        label,
+        count: meta.count,
+        shortCode: meta.shortCode,
+      }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+
     const baseClarities = isFancyDirectoryOnly ? ALL_FANCY_CLARITIES : ALL_CLARITIES;
     const extraClarities = isWhiteDirectoryOnly
       ? []
@@ -254,7 +278,7 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
       colorFamilies: orderedColorFamilies,
       colorFamilyCounts: coloredFamilyCounts,
       fancyIntensityCounts,
-      fancyColors: Array.from(fancyColorsSet),
+      fancyShades: sortedFancyShades,
       availableClarities,
       availableLabs: Array.from(labsSet),
       shapeCounts,
@@ -515,11 +539,11 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
   };
 
   return (
-    <section id="catalog-grid" className="max-w-7xl mx-auto px-6 py-10 space-y-8">
+    <section id="catalog-grid" className="max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-8">
       {/* Multi-Axis Filter Panel */}
-      <div className="bg-white border border-[#E4E6EB] rounded-xl p-6 space-y-6">
+      <div className="bg-white border border-[#E4E6EB] rounded-xl p-4 sm:p-6 space-y-6">
         {/* Panel Header: Параметры подбора (Upload button moved exclusively to Manager Cabinet) */}
-        <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[#E4E6EB]">
+        <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-4 pb-4 border-b border-[#E4E6EB]">
           <div className="flex items-center gap-2.5">
             <SlidersHorizontal className="w-4 h-4 text-[#1B365D]" />
             <h2 className="text-xl font-semibold text-[#111317]">
@@ -527,8 +551,8 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
             </h2>
           </div>
 
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="relative">
+          <div className="flex items-center gap-3 flex-wrap w-full sm:w-auto">
+            <div className="relative flex-1 sm:flex-initial">
               <Search className="w-3.5 h-3.5 text-[#6B7280] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="text"
@@ -536,9 +560,9 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
                 onChange={(e) =>
                   onChangeFilters((prev) => ({ ...prev, searchQuery: e.target.value }))
                 }
-                placeholder="Поиск по SKU, цвету, камню или № сертификата"
+                placeholder="Поиск по SKU, FIP, цвету или № сертификата"
                 aria-label="Поиск по артикулу, названию камня или номеру сертификата"
-                className="pl-8 pr-3 py-1.5 text-xs bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg w-64 sm:w-72 focus:outline-none focus:border-[#1B365D]"
+                className="pl-8 pr-3 py-1.5 text-xs bg-[#FAFAFA] border border-[#D5D9E0] rounded-lg w-full sm:w-72 focus:outline-none focus:border-[#1B365D]"
               />
             </div>
 
@@ -555,18 +579,36 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
           </div>
         </div>
 
-        {/* 1. Primary Unified Selector: Белый / Цветной */}
-        <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[#E4E6EB]">
-          <div className="space-y-1.5">
+        {/* 1. Primary Unified Selector: Белый / Цветной (Mobile: Все камни on top row, Белые & Цветные below) */}
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 sm:gap-4 pb-4 border-b border-[#E4E6EB]">
+          <div className="space-y-1.5 w-full lg:w-auto">
             <div className="text-xs font-medium text-[#5A606D]">
               Категория камней (Белый / Цветной)
             </div>
-            <div className="inline-flex items-center gap-1 p-1 bg-[#F1F3F5] rounded-lg">
+            <div className="grid grid-cols-2 sm:inline-flex items-center gap-1 p-1 bg-[#F1F3F5] rounded-lg w-full sm:w-auto">
               {(
                 [
-                  { id: 'all', label: 'Все камни', count: totalCount },
-                  { id: 'white', label: 'Белые (D–J)', count: whiteCount },
-                  { id: 'fancy', label: 'Цветные (Fancy)', count: fancyCount },
+                  {
+                    id: 'all',
+                    labelDesktop: 'Все камни',
+                    labelMobile: 'Все камни',
+                    count: totalCount,
+                    spanFullMobile: true,
+                  },
+                  {
+                    id: 'white',
+                    labelDesktop: 'Белые (D–J)',
+                    labelMobile: 'Белые',
+                    count: whiteCount,
+                    spanFullMobile: false,
+                  },
+                  {
+                    id: 'fancy',
+                    labelDesktop: 'Цветные (Fancy)',
+                    labelMobile: 'Цветные',
+                    count: fancyCount,
+                    spanFullMobile: false,
+                  },
                 ] as const
               ).map((tab) => {
                 const active = filters.colorCategory === tab.id;
@@ -575,14 +617,19 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
                     key={tab.id}
                     type="button"
                     onClick={() => handleSelectColorCategory(tab.id)}
-                    className={`px-3.5 py-2 text-xs font-medium rounded-md transition-colors whitespace-nowrap tabular-nums ${
+                    className={`${
+                      tab.spanFullMobile ? 'col-span-2 sm:col-span-1' : 'col-span-1'
+                    } min-w-0 px-2.5 sm:px-3.5 py-2 text-xs font-medium rounded-md transition-colors whitespace-nowrap tabular-nums flex items-center justify-center gap-1 ${
                       active
                         ? 'bg-[#1B365D] text-white shadow-sm'
                         : 'text-[#5A606D] hover:text-[#111317]'
                     }`}
                   >
-                    {tab.label}{' '}
-                    <span className={active ? 'text-white/75' : 'text-[#8A919E]'}>
+                    <span className="sm:hidden truncate">{tab.labelMobile}</span>
+                    <span className="hidden sm:inline">{tab.labelDesktop}</span>
+                    <span
+                      className={`shrink-0 ${active ? 'text-white/75' : 'text-[#8A919E]'}`}
+                    >
                       ({tab.count.toLocaleString('ru-RU')})
                     </span>
                   </button>
@@ -593,7 +640,7 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
 
           <div className="text-xs text-[#5A606D] max-w-md">
             Единый каталог белых и цветных бриллиантов. Переключите категорию, чтобы
-            выбрать шкалу цвета D–J для белых или оттенок и интенсивность для цветных.
+            выбрать шкалу цвета D–J для белых или основной цвет, интенсивность и оттенок для цветных.
           </div>
         </div>
 
@@ -812,11 +859,11 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
             </div>
           )}
 
-          {/* Colored-only characteristics: Shade (Оттенок) — hidden completely in White directory */}
+          {/* Colored-only characteristics: Base Color (Цвет) — hidden completely in White directory */}
           {!isWhiteDirectoryOnly && facets.hasColoredStones && (
             <div className="space-y-2">
               <div className="text-xs font-medium text-[#5A606D]">
-                Оттенок
+                Основной цвет (Цветные камни)
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
                 {facets.colorFamilies.map((family) => {
@@ -828,7 +875,7 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
                       key={family}
                       type="button"
                       onClick={() => toggleColorFamily(family)}
-                      className={`inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md border transition-colors whitespace-nowrap ${
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border transition-colors whitespace-nowrap tabular-nums ${
                         active
                           ? 'bg-[#1B365D] border-[#1B365D] text-white'
                           : count > 0
@@ -841,7 +888,12 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
                         className="w-2.5 h-2.5 rounded-full border border-black/15 shrink-0"
                         style={{ backgroundColor: swatch }}
                       />
-                      {family}
+                      <span>{family}</span>
+                      {count > 0 && (
+                        <span className={active ? 'text-white/75' : 'text-[#8A919E]'}>
+                          ({count.toLocaleString('ru-RU')})
+                        </span>
+                      )}
                     </button>
                   );
                 })}
@@ -849,7 +901,7 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
             </div>
           )}
 
-          {/* Fancy Intensity & Fancy Shades — shown in Colored mode or when a colored shade is selected */}
+          {/* Fancy Intensity & Specific Fancy Shades — shown in Colored mode or when a colored hue is selected */}
           {(isFancyDirectoryOnly || filters.colorFamilies.length > 0) && (
             <>
               <div className="space-y-2">
@@ -874,33 +926,52 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
                         }`}
                       >
                         {intensity}
-                        {count > 0 ? ` (${count})` : ''}
+                        {count > 0 ? ` (${count.toLocaleString('ru-RU')})` : ''}
                       </button>
                     );
                   })}
                 </div>
               </div>
 
-              {facets.fancyColors.length > 0 && (
+              {facets.fancyShades.length > 0 && (
                 <div className="space-y-2">
-                  <div className="text-xs font-medium text-[#5A606D]">
-                    Оттенок / Fancy-цвет
+                  <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-[#5A606D]">
+                    <span>Оттенок (Fancy-оттенок)</span>
+                    <span className="text-[11px] font-normal text-[#8A919E]">
+                      · распознаны коды FIP, FVB, FVOP, FIBP и др.
+                    </span>
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5">
-                    {facets.fancyColors.slice(0, 40).map((color) => {
-                      const active = filters.colors.includes(color);
+                    {facets.fancyShades.slice(0, 48).map((shade) => {
+                      const active = filters.colors.includes(shade.label);
                       return (
                         <button
-                          key={color}
+                          key={shade.label}
                           type="button"
-                          onClick={() => toggleColor(color)}
-                          className={`px-2.5 py-1.5 text-xs rounded-md border transition-colors whitespace-nowrap ${
+                          onClick={() => toggleColor(shade.label)}
+                          className={`px-2.5 py-1.5 text-xs rounded-md border transition-colors whitespace-nowrap tabular-nums ${
                             active
                               ? 'bg-[#1B365D] border-[#1B365D] text-white font-medium'
                               : 'bg-[#FAFAFA] border-[#E4E6EB] text-[#111317] hover:border-[#BFC6D2]'
                           }`}
                         >
-                          {color}
+                          {shade.label}
+                          {shade.shortCode ? (
+                            <span
+                              className={`ml-1 font-mono text-[11px] ${
+                                active ? 'text-white/80' : 'text-[#6B7280]'
+                              }`}
+                            >
+                              · {shade.shortCode}
+                            </span>
+                          ) : null}
+                          <span
+                            className={`ml-1 ${
+                              active ? 'text-white/75' : 'text-[#8A919E]'
+                            }`}
+                          >
+                            ({shade.count.toLocaleString('ru-RU')})
+                          </span>
                         </button>
                       );
                     })}

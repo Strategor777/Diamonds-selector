@@ -8,6 +8,7 @@ import {
   PricingConfig,
   PricingMode,
 } from '../types/diamond';
+import { parseFancyColor } from '../lib/fancyColorParser';
 
 export const SHAPE_LABELS_RU: Record<DiamondShape, string> = {
   Round: 'Круг (Round)',
@@ -263,26 +264,12 @@ export function applyPricingToDiamond(
   };
 }
 
-export function extractFancyIntensity(colorText: string): string {
-  const low = colorText.toLowerCase();
-  if (low.includes('fancy vivid') || low.includes('vivid')) return 'Fancy Vivid';
-  if (low.includes('fancy intense') || low.includes('intense')) return 'Fancy Intense';
-  if (low.includes('fancy deep') || low.includes('deep')) return 'Fancy Deep';
-  if (low.includes('fancy dark') || low.includes('dark')) return 'Fancy Dark';
-  if (low.includes('fancy light')) return 'Fancy Light';
-  if (low.includes('very light') || low.includes('faint') || low.includes('light')) return 'Light';
-  return 'Fancy';
+export function extractFancyIntensity(colorText: string): string | undefined {
+  return parseFancyColor(colorText).fancyIntensity;
 }
 
 export function extractFancyOvertone(colorText: string): string | undefined {
-  const low = colorText.toLowerCase();
-  if (low.includes('orangy') || low.includes('оранж')) return 'Оранжевый подтон';
-  if (low.includes('purplish') || low.includes('пурпур')) return 'Пурпурный подтон';
-  if (low.includes('greenish') || low.includes('зелен')) return 'Зеленоватый подтон';
-  if (low.includes('brownish') || low.includes('коричн')) return 'Коричневый подтон';
-  if (low.includes('grayish') || low.includes('серов')) return 'Серый подтон';
-  if (low.includes('yellowish') || low.includes('желт')) return 'Желтоватый подтон';
-  return undefined;
+  return parseFancyColor(colorText).fancyOvertone;
 }
 
 export function getFancyDiamondImage(

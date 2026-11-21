@@ -16,6 +16,12 @@ import {
   formatStonePrice,
   getColorHexTint,
 } from '../data/diamonds';
+import { getStudioFallbackImage } from '../lib/catalogEngine';
+import {
+  isNonImageMediaUrl,
+  parseFancyColor,
+  sanitizeMediaUrl,
+} from '../lib/fancyColorParser';
 import { Diamond } from '../types/diamond';
 import { DiamondShapeIcon } from './DiamondShapeIcon';
 import { DiamondTurntable360 } from './DiamondTurntable360';
@@ -46,13 +52,18 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
   const [activeTab, setActiveTab] = useState<'photo' | 'video' | 'cert'>(initialTab);
   const [loupeEnabled, setLoupeEnabled] = useState(false);
   const [loupePos, setLoupePos] = useState({ x: 50, y: 50 });
-  const [imgError, setImgError] = useState(false);
+  const [imgStage, setImgStage] = useState<0 | 1 | 2>(0);
+
+  const studioFallbackSrc = diamond ? getStudioFallbackImage(diamond) : undefined;
+  const rawSanitized = diamond ? sanitizeMediaUrl(diamond.imageUrl) : undefined;
+  const primarySrc =
+    rawSanitized && !isNonImageMediaUrl(rawSanitized) ? rawSanitized : undefined;
 
   useEffect(() => {
     setActiveTab(initialTab);
     setLoupeEnabled(false);
-    setImgError(false);
-  }, [diamond?.id, initialTab]);
+    setImgStage(primarySrc && primarySrc !== studioFallbackSrc ? 0 : 1);
+  }, [diamond?.id, initialTab, primarySrc, studioFallbackSrc]);
 
   useEffect(() => {
     if (!diamond) return;
@@ -65,7 +76,13 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
 
   if (!diamond) return null;
 
-  const pricePerCarat = Math.round(diamond.priceUsd / diamond.carat);
+  const activeImgSrc =
+    imgStage === 0 ? primarySrc : imgStage === 1 ? studioFallbackSrc : undefined;
+  const pricePerCarat =
+    diamond.carat > 0 ? Math.round(diamond.priceUsd / diamond.carat) : diamond.priceUsd;
+  const isColoredStone =
+    Boolean(diamond.colorFamily) && diamond.colorFamily !== 'Бесцветный (D–J)';
+  const parsedFancy = isColoredStone ? parseFancyColor(diamond.color) : null;
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!loupeEnabled) return;
@@ -77,7 +94,7 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-xs p-4 md:p-6 overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/55 backdrop-blur-xs p-2.5 sm:p-4 md:p-6 overflow-y-auto"
       role="dialog"
       aria-modal="true"
       aria-label={`Карточка бриллианта ${diamond.sku}`}
@@ -85,21 +102,23 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="bg-white border border-[#E4E6EB] rounded-xl max-w-5xl w-full overflow-hidden shadow-2xl my-auto">
+      <div className="bg-white border border-[#E4E6EB] rounded-xl max-w-5xl w-full min-w-0 overflow-hidden shadow-2xl my-auto">
         {/* Top Modal Header */}
-        <div className="flex items-center justify-between gap-4 px-6 py-4 border-b border-[#E4E6EB]">
-          <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-3.5 sm:py-4 border-b border-[#E4E6EB]">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
             <DiamondShapeIcon
               shape={diamond.shape}
-              className="w-7 h-7 text-[#1B365D] shrink-0"
+              className="w-6 h-6 sm:w-7 sm:h-7 text-[#1B365D] shrink-0"
               filled
             />
             <div className="min-w-0">
-              <div className="text-xs text-[#5A606D] font-mono truncate">
+              <div className="text-[11px] sm:text-xs text-[#5A606D] font-mono truncate">
                 {diamond.sku} · {diamond.certLab} #{diamond.certNumber}
               </div>
-              <h2 className="text-2xl font-semibold text-[#111317] truncate">
-                {diamond.stoneType && diamond.stoneType !== 'Бриллиант'
+              <h2 className="text-lg sm:text-2xl font-semibold text-[#111317] truncate">
+                {diamond.stoneType &&
+                diamond.stoneType !== 'Бриллиант' &&
+                diamond.stoneType !== 'Цветной бриллиант'
                   ? `${diamond.stoneType} · `
                   : ''}
                 {SHAPE_LABELS_RU[diamond.shape]} — {diamond.carat.toFixed(2)} ct
@@ -111,23 +130,23 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
             type="button"
             onClick={onClose}
             aria-label="Закрыть окно"
-            className="w-10 h-10 rounded-lg border border-[#E4E6EB] flex items-center justify-center text-[#5A606D] hover:text-[#111317] hover:bg-[#F7F8FA] transition-colors shrink-0"
+            className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg border border-[#E4E6EB] flex items-center justify-center text-[#5A606D] hover:text-[#111317] hover:bg-[#F7F8FA] transition-colors shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Main 2-Column Inspector Body */}
-        <div className="grid grid-cols-1 lg:grid-cols-12">
+        <div className="grid grid-cols-1 lg:grid-cols-12 min-w-0">
           {/* Left Media / 360 / Certificate Stage */}
-          <div className="lg:col-span-7 p-6 border-b lg:border-b-0 lg:border-r border-[#E4E6EB] space-y-4 bg-[#FAFAFA]">
+          <div className="lg:col-span-7 min-w-0 p-4 sm:p-6 border-b lg:border-b-0 lg:border-r border-[#E4E6EB] space-y-4 bg-[#FAFAFA]">
             {/* Media Mode Tabs */}
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="inline-flex items-center gap-1 p-1 bg-[#EAECEF] rounded-lg">
+            <div className="flex items-center justify-between gap-2.5 flex-wrap">
+              <div className="flex flex-wrap items-center gap-1 p-1 bg-[#EAECEF] rounded-lg max-w-full">
                 <button
                   type="button"
                   onClick={() => setActiveTab('photo')}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+                  className={`px-2.5 sm:px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
                     activeTab === 'photo'
                       ? 'bg-white text-[#111317] shadow-sm'
                       : 'text-[#5A606D] hover:text-[#111317]'
@@ -138,7 +157,7 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setActiveTab('video')}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+                  className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
                     activeTab === 'video'
                       ? 'bg-white text-[#111317] shadow-sm'
                       : 'text-[#5A606D] hover:text-[#111317]'
@@ -150,7 +169,7 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setActiveTab('cert')}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+                  className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
                     activeTab === 'cert'
                       ? 'bg-white text-[#111317] shadow-sm'
                       : 'text-[#5A606D] hover:text-[#111317]'
@@ -184,16 +203,16 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                 onMouseLeave={() => {
                   if (loupeEnabled) setLoupePos({ x: 50, y: 50 });
                 }}
-                className={`relative aspect-[4/3] rounded-lg overflow-hidden border border-[#E4E6EB] bg-[#F1F3F5] ${
+                className={`relative aspect-square max-h-[460px] w-full mx-auto rounded-lg overflow-hidden border border-[#E4E6EB] bg-[#F8F9FB] ${
                   loupeEnabled ? 'cursor-zoom-in' : ''
                 }`}
               >
-                {!imgError ? (
+                {activeImgSrc ? (
                   <img
-                    src={diamond.imageUrl}
+                    src={activeImgSrc}
                     alt={`${SHAPE_SHORT_RU[diamond.shape]} ${diamond.carat.toFixed(2)} ct`}
                     referrerPolicy="no-referrer"
-                    onError={() => setImgError(true)}
+                    onError={() => setImgStage((prev) => (prev === 0 ? 1 : 2))}
                     style={
                       loupeEnabled
                         ? {
@@ -202,7 +221,7 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                           }
                         : undefined
                     }
-                    className="w-full h-full object-cover transition-transform duration-150 ease-out"
+                    className="w-full h-full object-contain p-3 transition-transform duration-150 ease-out"
                   />
                 ) : (
                   <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-[#1B365D]">
@@ -213,7 +232,7 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                   </div>
                 )}
 
-                <div className="absolute bottom-3 right-3 px-2.5 py-1 bg-white/92 backdrop-blur-sm border border-[#E4E6EB] rounded text-xs font-mono tabular-nums text-[#111317]">
+                <div className="absolute bottom-2.5 right-2.5 max-w-[calc(100%-20px)] truncate px-2.5 py-1 bg-white/92 backdrop-blur-sm border border-[#E4E6EB] rounded text-xs font-mono tabular-nums text-[#111317]">
                   {diamond.lengthMm.toFixed(2)} × {diamond.widthMm.toFixed(2)} × {diamond.depthMm.toFixed(2)} мм
                 </div>
               </div>
@@ -323,15 +342,15 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
           </div>
 
           {/* Right Contiguous Specifications & Actions Module */}
-          <div className="lg:col-span-5 p-6 flex flex-col justify-between gap-6">
-            <div className="space-y-5">
+          <div className="lg:col-span-5 min-w-0 p-4 sm:p-6 flex flex-col justify-between gap-6">
+            <div className="space-y-5 min-w-0">
               {/* Price Display */}
               <div className="pb-4 border-b border-[#E4E6EB]">
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-3xl font-semibold text-[#111317] font-mono tabular-nums">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="text-2xl sm:text-3xl font-semibold text-[#111317] font-mono tabular-nums">
                     {formatStonePrice(diamond.priceUsd, diamond.currency)}
                   </span>
-                  <span className="text-sm text-[#5A606D] font-mono tabular-nums">
+                  <span className="text-xs sm:text-sm text-[#5A606D] font-mono tabular-nums whitespace-nowrap">
                     {formatStonePrice(pricePerCarat, diamond.currency)} / ct
                   </span>
                 </div>
@@ -339,16 +358,22 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
 
               {/* 4Cs & Optical Specs */}
               <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                <div className="border-b border-[#F1F3F5] pb-2">
+                <div className="border-b border-[#F1F3F5] pb-2 min-w-0">
                   <dt className="text-xs text-[#5A606D]">Каратность</dt>
                   <dd className="font-mono tabular-nums font-semibold text-[#111317] mt-0.5">
                     {diamond.carat.toFixed(2)} ct
                   </dd>
                 </div>
-                <div className="border-b border-[#F1F3F5] pb-2">
-                  <dt className="text-xs text-[#5A606D]">Цвет / Оттенок</dt>
-                  <dd className="font-mono font-semibold text-[#111317] mt-0.5 flex items-center gap-1.5">
-                    {diamond.colorFamily && diamond.colorFamily !== 'Бесцветный (D–J)' && (
+                <div className="border-b border-[#F1F3F5] pb-2 min-w-0">
+                  <dt className="text-xs text-[#5A606D]">
+                    {isColoredStone
+                      ? parsedFancy?.isSpecificShade
+                        ? 'Цвет и оттенок'
+                        : 'Основной цвет'
+                      : 'Цвет (D–J)'}
+                  </dt>
+                  <dd className="font-semibold text-[#111317] mt-0.5 flex items-center gap-1.5 min-w-0">
+                    {isColoredStone && (
                       <span
                         aria-hidden="true"
                         className="w-2.5 h-2.5 rounded-full border border-black/15 shrink-0"
@@ -360,15 +385,28 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                         }}
                       />
                     )}
-                    <span>{diamond.color}</span>
+                    <span className="truncate font-mono">
+                      {isColoredStone
+                        ? parsedFancy?.isSpecificShade
+                          ? parsedFancy.canonicalColor
+                          : diamond.colorFamily || diamond.color
+                        : diamond.color}
+                    </span>
                   </dd>
-                  {(diamond.fancyIntensity || diamond.fancyOvertone) && (
-                    <div className="text-[11px] text-[#5A606D] mt-0.5">
-                      {[diamond.fancyIntensity, diamond.fancyOvertone]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </div>
-                  )}
+                  {isColoredStone &&
+                    (parsedFancy?.shortCode ||
+                      diamond.fancyIntensity ||
+                      diamond.fancyOvertone) && (
+                      <div className="text-[11px] text-[#5A606D] mt-0.5 truncate">
+                        {[
+                          parsedFancy?.shortCode,
+                          diamond.fancyIntensity,
+                          diamond.fancyOvertone,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </div>
+                    )}
                 </div>
                 <div className="border-b border-[#F1F3F5] pb-2">
                   <dt className="text-xs text-[#5A606D]">Чистота</dt>
@@ -453,11 +491,11 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                 </button>
               )}
 
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => onToggleCompare(diamond.id)}
-                  className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap ${
+                  className={`inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap min-w-0 ${
                     isCompared
                       ? 'bg-[#1B365D] border-[#1B365D] text-white'
                       : 'bg-white border-[#D5D9E0] text-[#111317] hover:bg-[#F7F8FA]'
@@ -465,13 +503,13 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                 >
                   {isCompared ? (
                     <>
-                      <Check className="w-4 h-4" />
-                      В сравнении
+                      <Check className="w-4 h-4 shrink-0" />
+                      <span className="truncate">В сравнении</span>
                     </>
                   ) : (
                     <>
-                      <Scale className="w-4 h-4" />
-                      Добавить к сравнению
+                      <Scale className="w-4 h-4 shrink-0" />
+                      <span className="truncate">Сравнить</span>
                     </>
                   )}
                 </button>
@@ -482,10 +520,10 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                     onClose();
                     onFindPair(diamond);
                   }}
-                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-medium rounded-lg border border-[#D5D9E0] bg-white text-[#111317] hover:bg-[#F7F8FA] transition-colors whitespace-nowrap"
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium rounded-lg border border-[#D5D9E0] bg-white text-[#111317] hover:bg-[#F7F8FA] transition-colors whitespace-nowrap min-w-0"
                 >
-                  <GitCompare className="w-4 h-4 text-[#1B365D]" />
-                  Подобрать пару
+                  <GitCompare className="w-4 h-4 text-[#1B365D] shrink-0" />
+                  <span className="truncate">Найти пару</span>
                 </button>
               </div>
             </div>
