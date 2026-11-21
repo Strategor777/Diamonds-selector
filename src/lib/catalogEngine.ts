@@ -589,7 +589,7 @@ export function normalizeCatalogDiamonds(catalog: Diamond[]): Diamond[] {
       } else {
         nextImageUrl = sanitizedImg;
       }
-    } else if (!nextImageUrl) {
+    } else {
       nextImageUrl = getStudioFallbackImage({
         color: nextColor,
         colorFamily: nextColorFamily,

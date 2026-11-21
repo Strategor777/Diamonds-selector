@@ -16,7 +16,6 @@ import {
   formatStonePrice,
   getColorHexTint,
 } from '../data/diamonds';
-import { getCalibratedStudioVisual } from '../lib/certVerification';
 import { classifyColorFamily } from '../lib/diamondMapper';
 import { PairAnchorSpec, findMatchedPairs } from '../lib/pairMatcher';
 import {
@@ -28,6 +27,7 @@ import {
 } from '../types/diamond';
 import { DiamondShapeIcon } from './DiamondShapeIcon';
 import { NumericInput } from './NumericInput';
+import { StudioDiamondImage } from './StudioDiamondImage';
 
 interface PairFinderViewProps {
   catalog: Diamond[];
@@ -675,10 +675,6 @@ export const PairFinderView: React.FC<PairFinderViewProps> = ({
             <div className="space-y-3">
               {matches.map((cand) => {
                 const isSelected = activeCandidate?.diamond.id === cand.diamond.id;
-                const studioVis = getCalibratedStudioVisual(cand.diamond);
-                const thumbSrc = cand.diamond.useStudioPhoto
-                  ? studioVis.src
-                  : cand.diamond.imageUrl;
                 return (
                   <div
                     key={cand.diamond.id}
@@ -689,27 +685,9 @@ export const PairFinderView: React.FC<PairFinderViewProps> = ({
                     }`}
                   >
                     <div className="flex items-center gap-4 min-w-0">
-                      <img
-                        src={thumbSrc}
-                        alt={cand.diamond.sku}
-                        referrerPolicy="no-referrer"
-                        style={
-                          cand.diamond.useStudioPhoto && studioVis.filter
-                            ? { filter: studioVis.filter }
-                            : undefined
-                        }
-                        onError={(e) => {
-                          const fallback = studioVis.src;
-                          if (e.currentTarget.src !== fallback && !e.currentTarget.dataset.fb) {
-                            e.currentTarget.dataset.fb = '1';
-                            e.currentTarget.src = fallback;
-                            if (studioVis.filter) {
-                              e.currentTarget.style.filter = studioVis.filter;
-                            }
-                          }
-                        }}
-                        className="w-14 h-14 rounded object-contain p-1 border border-[#E4E6EB] shrink-0 bg-[#F8F9FB]"
-                      />
+                      <div className="w-14 h-14 rounded overflow-hidden border border-[#E4E6EB] shrink-0 bg-[#F8F9FB]">
+                        <StudioDiamondImage diamond={cand.diamond} compact />
+                      </div>
                       <div className="min-w-0 space-y-0.5">
                         <div className="flex items-center gap-2 text-xs text-[#5A606D]">
                           <span className="font-mono">{cand.diamond.sku}</span>

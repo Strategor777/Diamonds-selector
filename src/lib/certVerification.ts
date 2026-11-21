@@ -114,12 +114,32 @@ export interface BatchVerifyProgress {
   verifiedCount: number;
   manualCount: number;
   notFoundCount: number;
+  rateLimited?: boolean;
+}
+
+function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      resolve();
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 export async function verifyBatchCertificateColors(
   stones: Diamond[],
   options?: {
     onProgress?: (progress: BatchVerifyProgress) => void;
+    onChunkComplete?: (chunkResults: Map<string, CertVerifyResponse>) => void;
     signal?: AbortSignal;
   }
 ): Promise<Map<string, CertVerifyResponse>> {
@@ -130,6 +150,7 @@ export async function verifyBatchCertificateColors(
   let verifiedCount = 0;
   let manualCount = 0;
   let notFoundCount = 0;
+  let rateLimited = false;
 
   const CHUNK_SIZE = 10;
 
@@ -137,6 +158,7 @@ export async function verifyBatchCertificateColors(
     if (options?.signal?.aborted) break;
 
     const chunk = verifiable.slice(i, i + CHUNK_SIZE);
+    const chunkResults = new Map<string, CertVerifyResponse>();
     const uncached: Diamond[] = [];
 
     for (const stone of chunk) {
@@ -144,6 +166,7 @@ export async function verifyBatchCertificateColors(
       const hit = clientVerifyCache.get(key);
       if (hit) {
         results.set(stone.id, hit);
+        chunkResults.set(stone.id, hit);
         completed += 1;
         if (hit.status === 'verified') verifiedCount += 1;
         else if (hit.status === 'not_found') notFoundCount += 1;
@@ -155,18 +178,29 @@ export async function verifyBatchCertificateColors(
 
     if (uncached.length > 0) {
       try {
-        const res = await fetch('/api/cert-verify/batch', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: options?.signal,
-          body: JSON.stringify({
-            items: uncached.map((s) => ({
-              id: s.id,
-              lab: s.certLab || 'GIA',
-              certNumber: s.certNumber.trim(),
-            })),
-          }),
-        });
+        const sendBatchRequest = () =>
+          fetch('/api/cert-verify/batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: options?.signal,
+            body: JSON.stringify({
+              items: uncached.map((s) => ({
+                id: s.id,
+                lab: s.certLab || 'GIA',
+                certNumber: s.certNumber.trim(),
+              })),
+            }),
+          });
+
+        let res = await sendBatchRequest();
+
+        // If server rate-limit (429) triggers, pause briefly and retry once cleanly
+        if (res.status === 429 && !options?.signal?.aborted) {
+          await sleepWithAbort(2500, options?.signal);
+          if (!options?.signal?.aborted) {
+            res = await sendBatchRequest();
+          }
+        }
 
         if (res.ok) {
           const payload = (await res.json()) as {
@@ -178,22 +212,30 @@ export async function verifyBatchCertificateColors(
             const key = `${(item.lab || 'GIA').toUpperCase()}:${(item.certNumber || '').trim().toUpperCase()}`;
             clientVerifyCache.set(key, item);
             results.set(item.id, item);
+            chunkResults.set(item.id, item);
             completed += 1;
             if (item.status === 'verified') verifiedCount += 1;
             else if (item.status === 'not_found') notFoundCount += 1;
             else manualCount += 1;
           }
         } else {
+          if (res.status === 429) {
+            rateLimited = true;
+          }
           for (const stone of uncached) {
             const fallback: CertVerifyResponse = {
               status: 'manual_required',
               lab: stone.certLab || 'GIA',
               certNumber: stone.certNumber,
               verifyUrl: getCertVerifyUrl(stone.certLab, stone.certNumber),
-              message: `Запрос проверки завершился со статусом ${res.status}.`,
+              message:
+                res.status === 429
+                  ? 'Достигнут лимит частоты запросов (60/мин). Повторите через минуту или подтвердите цвет по ссылке.'
+                  : `Запрос проверки завершился со статусом ${res.status}.`,
               checkedAt: new Date().toISOString(),
             };
             results.set(stone.id, fallback);
+            chunkResults.set(stone.id, fallback);
             completed += 1;
             manualCount += 1;
           }
@@ -212,10 +254,15 @@ export async function verifyBatchCertificateColors(
             checkedAt: new Date().toISOString(),
           };
           results.set(stone.id, fallback);
+          chunkResults.set(stone.id, fallback);
           completed += 1;
           manualCount += 1;
         }
       }
+    }
+
+    if (chunkResults.size > 0) {
+      options?.onChunkComplete?.(chunkResults);
     }
 
     options?.onProgress?.({
@@ -224,7 +271,17 @@ export async function verifyBatchCertificateColors(
       verifiedCount,
       manualCount,
       notFoundCount,
+      rateLimited,
     });
+
+    if (rateLimited) {
+      break;
+    }
+
+    // Gentle pacing between uncached upstream chunks to respect lab & server rate limits
+    if (uncached.length > 0 && i + CHUNK_SIZE < verifiable.length) {
+      await sleepWithAbort(650, options?.signal);
+    }
   }
 
   return results;
@@ -340,15 +397,288 @@ export function applyVerifiedColorToDiamond(
   return nextBase;
 }
 
+export type StudioMacroMaskShape = 'round' | 'oval' | 'cushion' | 'emerald' | 'pear';
+
+export interface DiamondOpticalPalette {
+  lightHex: string;
+  primaryHex: string;
+  deepHex: string;
+  overtoneHex?: string;
+  multiplyOpacity: number;
+  colorOpacity: number;
+  darknessOverlay?: number;
+  isWhite: boolean;
+  isBlack: boolean;
+}
+
 export interface CalibratedStudioVisual {
+  mode: 'native-photo' | 'tinted-macro' | 'faceted-svg';
   src: string;
+  maskShape?: StudioMacroMaskShape;
   filter?: string;
+  palette: DiamondOpticalPalette;
   label: string;
 }
 
+type FancyColorKey =
+  | 'yellow'
+  | 'pink'
+  | 'blue'
+  | 'green'
+  | 'brown'
+  | 'cognac'
+  | 'champagne'
+  | 'orange'
+  | 'purple'
+  | 'red'
+  | 'gray'
+  | 'black'
+  | 'chameleon';
+
+function resolveCanonicalColorKey(
+  diamond: Diamond,
+  parsed: ReturnType<typeof parseFancyColor>
+): FancyColorKey {
+  const family = (diamond.colorFamily || parsed.colorFamily || '').toLowerCase();
+  const hay = `${diamond.color || ''} ${diamond.colorFamily || ''} ${diamond.fancyOvertone || ''}`.toLowerCase();
+
+  if (family.includes('чёрн') || family.includes('черн') || hay.includes('black')) {
+    return 'black';
+  }
+  if (family.includes('сер') || hay.includes('gray') || hay.includes('grey')) {
+    return 'gray';
+  }
+  if (family.includes('красн') || /\bred\b/.test(hay)) {
+    return 'red';
+  }
+  if (family.includes('фиолет') || hay.includes('purple') || hay.includes('violet')) {
+    return 'purple';
+  }
+  if (family.includes('оранж') || /\borange\b/.test(hay)) {
+    return 'orange';
+  }
+  if (family.includes('розов') || hay.includes('pink')) {
+    return 'pink';
+  }
+  if (family.includes('син') || family.includes('голуб') || hay.includes('blue')) {
+    return 'blue';
+  }
+  if (family.includes('хамелеон') || hay.includes('chameleon')) {
+    return 'chameleon';
+  }
+  if (family.includes('зел') || hay.includes('green')) {
+    return 'green';
+  }
+  if (hay.includes('champagne') || hay.includes('шампан')) {
+    return 'champagne';
+  }
+  if (family.includes('коньяч') || hay.includes('cognac')) {
+    return 'cognac';
+  }
+  if (family.includes('корич') || hay.includes('brown')) {
+    return 'brown';
+  }
+  if (family.includes('жёлт') || family.includes('желт') || hay.includes('yellow')) {
+    return 'yellow';
+  }
+  return 'yellow';
+}
+
+function resolveOvertoneHex(overtoneText: string): string | undefined {
+  const o = overtoneText.toLowerCase();
+  if (o.includes('purplish') || o.includes('пурпур')) return '#B65CF2';
+  if (o.includes('violetish') || o.includes('фиолет')) return '#8B5CF6';
+  if (o.includes('orangy') || o.includes('оранж')) return '#F97316';
+  if (o.includes('pinkish') || o.includes('розов')) return '#F472B6';
+  if (o.includes('reddish') || o.includes('красн')) return '#DC2626';
+  if (o.includes('greenish') || o.includes('зелен')) return '#10B981';
+  if (o.includes('bluish') || o.includes('голуб') || o.includes('синев')) return '#2563EB';
+  if (o.includes('yellowish') || o.includes('желт') || o.includes('жёлт')) return '#EAB308';
+  if (o.includes('brownish') || o.includes('корич')) return '#8B5A2B';
+  if (o.includes('grayish') || o.includes('сер')) return '#94A3B8';
+  return undefined;
+}
+
+const FANCY_BASE_PALETTES: Record<
+  FancyColorKey,
+  { lightHex: string; primaryHex: string; deepHex: string }
+> = {
+  yellow: { lightHex: '#FFF6B8', primaryHex: '#F5C836', deepHex: '#C68A0A' },
+  pink: { lightHex: '#FFD6E6', primaryHex: '#EC7AA8', deepHex: '#B93C73' },
+  blue: { lightHex: '#CFE4FF', primaryHex: '#4E8AE6', deepHex: '#1D4FA8' },
+  green: { lightHex: '#CCF7E2', primaryHex: '#3AC284', deepHex: '#117A4B' },
+  chameleon: { lightHex: '#E0EFC7', primaryHex: '#7A9E47', deepHex: '#476524' },
+  brown: { lightHex: '#E8C8AA', primaryHex: '#9C5E2E', deepHex: '#592E12' },
+  cognac: { lightHex: '#F3D1AE', primaryHex: '#BA6E2C', deepHex: '#733B11' },
+  champagne: { lightHex: '#F8E8CF', primaryHex: '#CFA878', deepHex: '#8E683D' },
+  orange: { lightHex: '#FFD8B0', primaryHex: '#F27D24', deepHex: '#B84708' },
+  purple: { lightHex: '#E9D2FF', primaryHex: '#9F62E6', deepHex: '#5F2AA8' },
+  red: { lightHex: '#FFC2C8', primaryHex: '#D83446', deepHex: '#8C1423' },
+  gray: { lightHex: '#E2E7EE', primaryHex: '#8F9AA8', deepHex: '#4E5866' },
+  black: { lightHex: '#5B6270', primaryHex: '#252932', deepHex: '#0F1116' },
+};
+
+export function getDiamondOpticalPalette(diamond: Diamond): DiamondOpticalPalette {
+  const isFancy =
+    diamond.directory === 'fancy' ||
+    Boolean(diamond.isFancyColor) ||
+    (Boolean(diamond.colorFamily) && diamond.colorFamily !== 'Бесцветный (D–J)');
+
+  if (!isFancy) {
+    const grade = (diamond.color || 'D').trim().toUpperCase().charAt(0);
+    if (grade === 'D' || grade === 'E' || grade === 'F') {
+      return {
+        lightHex: '#FFFFFF',
+        primaryHex: '#EEF4FC',
+        deepHex: '#CBD8E8',
+        multiplyOpacity: 0,
+        colorOpacity: 0,
+        isWhite: true,
+        isBlack: false,
+      };
+    }
+    if (grade === 'G') {
+      return {
+        lightHex: '#FFFDF8',
+        primaryHex: '#F7F3E8',
+        deepHex: '#DDD6C3',
+        multiplyOpacity: 0.06,
+        colorOpacity: 0.05,
+        isWhite: true,
+        isBlack: false,
+      };
+    }
+    if (grade === 'H') {
+      return {
+        lightHex: '#FFFBF0',
+        primaryHex: '#F4ECDA',
+        deepHex: '#D6C8A8',
+        multiplyOpacity: 0.12,
+        colorOpacity: 0.1,
+        isWhite: true,
+        isBlack: false,
+      };
+    }
+    return {
+      lightHex: '#FFF6DE',
+      primaryHex: '#EEDDB8',
+      deepHex: '#C7AE7D',
+      multiplyOpacity: grade === 'I' ? 0.2 : 0.28,
+      colorOpacity: grade === 'I' ? 0.16 : 0.24,
+      isWhite: true,
+      isBlack: false,
+    };
+  }
+
+  const parsed = parseFancyColor(diamond.color);
+  const colorKey = resolveCanonicalColorKey(diamond, parsed);
+  const base = FANCY_BASE_PALETTES[colorKey];
+  const intensity = diamond.fancyIntensity || parsed.fancyIntensity || 'Fancy';
+  const overtoneHex = resolveOvertoneHex(
+    `${diamond.fancyOvertone || ''} ${parsed.fancyOvertone || ''} ${diamond.color || ''}`
+  );
+
+  if (colorKey === 'black') {
+    return {
+      ...base,
+      multiplyOpacity: 0.88,
+      colorOpacity: 0.9,
+      darknessOverlay: 0.42,
+      isWhite: false,
+      isBlack: true,
+    };
+  }
+
+  if (colorKey === 'gray') {
+    return {
+      ...base,
+      overtoneHex,
+      multiplyOpacity: 0.56,
+      colorOpacity: 0.65,
+      darknessOverlay: intensity === 'Fancy Dark' ? 0.24 : 0.08,
+      isWhite: false,
+      isBlack: false,
+    };
+  }
+
+  let multiplyOpacity = 0.72;
+  let colorOpacity = 0.62;
+  let darknessOverlay = 0;
+
+  switch (intensity) {
+    case 'Light':
+      multiplyOpacity = 0.36;
+      colorOpacity = 0.36;
+      break;
+    case 'Fancy Light':
+      multiplyOpacity = 0.52;
+      colorOpacity = 0.48;
+      break;
+    case 'Fancy':
+      multiplyOpacity = 0.72;
+      colorOpacity = 0.62;
+      break;
+    case 'Fancy Intense':
+      multiplyOpacity = 0.86;
+      colorOpacity = 0.78;
+      break;
+    case 'Fancy Vivid':
+      multiplyOpacity = 0.94;
+      colorOpacity = 0.88;
+      break;
+    case 'Fancy Deep':
+      multiplyOpacity = 0.92;
+      colorOpacity = 0.82;
+      darknessOverlay = 0.18;
+      break;
+    case 'Fancy Dark':
+      multiplyOpacity = 0.9;
+      colorOpacity = 0.78;
+      darknessOverlay = 0.3;
+      break;
+    default:
+      break;
+  }
+
+  return {
+    ...base,
+    overtoneHex,
+    multiplyOpacity,
+    colorOpacity,
+    darknessOverlay: darknessOverlay || undefined,
+    isWhite: false,
+    isBlack: false,
+  };
+}
+
+function getMacroShapeForDiamond(
+  shape: Diamond['shape']
+): { maskShape: StudioMacroMaskShape; whiteMacroSrc: string } | null {
+  switch (shape) {
+    case 'Round':
+    case 'Old European':
+      return { maskShape: 'round', whiteMacroSrc: SHAPE_IMAGE_MAP.Round };
+    case 'Oval':
+    case 'Moval':
+      return { maskShape: 'oval', whiteMacroSrc: SHAPE_IMAGE_MAP.Oval };
+    case 'Cushion':
+    case 'Antique Cushion':
+    case 'Old Mine':
+      return { maskShape: 'cushion', whiteMacroSrc: SHAPE_IMAGE_MAP.Cushion };
+    case 'Emerald':
+    case 'Octagon':
+      return { maskShape: 'emerald', whiteMacroSrc: SHAPE_IMAGE_MAP.Emerald };
+    case 'Pear':
+      return { maskShape: 'pear', whiteMacroSrc: SHAPE_IMAGE_MAP.Pear };
+    default:
+      return null;
+  }
+}
+
 /**
- * Selects the best studio base photograph and computes optical CSS color/intensity/overtone
- * calibration so the studio visual matches the diamond's verified color, shade, intensity & shape.
+ * Selects the studio visual strictly SHAPE-FIRST, then calibrates exact color, shade,
+ * overtone, and intensity. Never displays a mismatched cut silhouette (e.g. never shows
+ * a Pear or Emerald photo for a Round diamond).
  */
 export function getCalibratedStudioVisual(diamond: Diamond): CalibratedStudioVisual {
   const isFancy =
@@ -357,200 +687,143 @@ export function getCalibratedStudioVisual(diamond: Diamond): CalibratedStudioVis
     (Boolean(diamond.colorFamily) && diamond.colorFamily !== 'Бесцветный (D–J)');
 
   const shapeLabel = SHAPE_SHORT_RU[diamond.shape] || diamond.shape;
+  const palette = getDiamondOpticalPalette(diamond);
+  const macroMatch = getMacroShapeForDiamond(diamond.shape);
 
-  // White / Near-colorless (D–J) studio photo calibrated by shape & letter grade warmth
   if (!isFancy) {
-    const src = SHAPE_IMAGE_MAP[diamond.shape] || SHAPE_IMAGE_MAP.Round;
-    const grade = (diamond.color || 'D').trim().toUpperCase().charAt(0);
-    let filter: string | undefined;
-    if (grade === 'D' || grade === 'E') {
-      filter = 'brightness(1.03) contrast(1.02)';
-    } else if (grade === 'H') {
-      filter = 'sepia(0.05) saturate(1.04)';
-    } else if (grade === 'I') {
-      filter = 'sepia(0.11) saturate(1.08)';
-    } else if (grade >= 'J' && grade <= 'Z') {
-      filter = 'sepia(0.18) saturate(1.16) brightness(0.99)';
+    const label = `Студийное фото · ${shapeLabel} · ${diamond.color}`;
+    if (macroMatch) {
+      return {
+        mode: 'tinted-macro',
+        src: macroMatch.whiteMacroSrc,
+        maskShape: macroMatch.maskShape,
+        palette,
+        label,
+      };
     }
-
     return {
-      src,
-      filter,
-      label: `Студийное фото · ${shapeLabel} · ${diamond.color}`,
+      mode: 'faceted-svg',
+      src: SHAPE_IMAGE_MAP[diamond.shape] || SHAPE_IMAGE_MAP.Round,
+      palette,
+      label,
     };
   }
 
-  // Colored / Fancy diamonds: pick optimal base photo + calibrate hue, overtone & intensity
   const parsed = parseFancyColor(diamond.color);
-  const family = (diamond.colorFamily || parsed.colorFamily || '').toLowerCase();
-  const hay = `${diamond.color} ${diamond.colorFamily || ''} ${diamond.fancyOvertone || ''}`.toLowerCase();
+  const colorKey = resolveCanonicalColorKey(diamond, parsed);
   const intensity = diamond.fancyIntensity || parsed.fancyIntensity || 'Fancy';
+  const shadeText = parsed.isSpecificShade
+    ? parsed.canonicalColor
+    : diamond.colorFamily || diamond.color;
+  const label = `Студийное фото · ${shapeLabel} · ${shadeText}`;
 
-  let src: string = FANCY_IMAGE_MAP.yellow;
-  let hueDeg = 0;
-  let sat = 1.0;
-  let bright = 1.0;
-  let contrast = 1.0;
-
-  if (family.includes('чёрн') || family.includes('черн') || hay.includes('black')) {
-    src = SHAPE_IMAGE_MAP[diamond.shape] || SHAPE_IMAGE_MAP.Round;
-    sat = 0.06;
-    bright = 0.36;
-    contrast = 1.48;
-  } else if (family.includes('сер') || hay.includes('gray') || hay.includes('grey')) {
-    src = SHAPE_IMAGE_MAP[diamond.shape] || SHAPE_IMAGE_MAP.Round;
-    sat = 0.16;
-    bright = 0.86;
-    contrast = 1.08;
-  } else if (family.includes('красн') || hay.includes(' red')) {
-    src = FANCY_IMAGE_MAP.pink;
-    hueDeg = 14;
-    sat = 1.55;
-    bright = 0.84;
-    contrast = 1.12;
-  } else if (family.includes('фиолет') || hay.includes('purple') || hay.includes('violet')) {
-    src = FANCY_IMAGE_MAP.pink;
-    hueDeg = -52;
-    sat = 1.18;
-    bright = 0.94;
-    contrast = 1.05;
-  } else if (family.includes('оранж') || hay.includes('orange')) {
-    src = FANCY_IMAGE_MAP.cognac;
-    hueDeg = -10;
-    sat = 1.52;
-    bright = 1.05;
-    contrast = 1.04;
-  } else if (family.includes('розов') || hay.includes('pink')) {
-    src = FANCY_IMAGE_MAP.pink;
-    if (hay.includes('purplish') || hay.includes('пурпур')) {
-      hueDeg -= 22;
-      sat *= 1.06;
-    } else if (hay.includes('orangy') || hay.includes('оранж')) {
-      hueDeg += 18;
-      sat *= 1.08;
-    } else if (hay.includes('brownish') || hay.includes('корич')) {
-      hueDeg += 8;
-      sat *= 0.82;
-      bright *= 0.92;
-    }
-  } else if (family.includes('син') || family.includes('голуб') || hay.includes('blue')) {
-    src = FANCY_IMAGE_MAP.blue;
-    if (hay.includes('greenish') || hay.includes('зелен')) {
-      hueDeg -= 22;
-    } else if (hay.includes('grayish') || hay.includes('сер')) {
-      sat *= 0.62;
-      bright *= 0.95;
-    } else if (hay.includes('violetish') || hay.includes('фиолет')) {
-      hueDeg += 18;
-    }
-  } else if (family.includes('хамелеон') || hay.includes('chameleon')) {
-    src = FANCY_IMAGE_MAP.green;
-    hueDeg = -28;
-    sat = 0.84;
-    bright = 0.95;
-    contrast = 1.06;
-  } else if (family.includes('зел') || hay.includes('green')) {
-    src = FANCY_IMAGE_MAP.green;
-    if (hay.includes('bluish') || hay.includes('голуб')) {
-      hueDeg += 26;
-    } else if (hay.includes('yellowish') || hay.includes('желт')) {
-      hueDeg -= 24;
-    } else if (hay.includes('grayish') || hay.includes('сер')) {
-      sat *= 0.68;
-    }
-  } else if (family.includes('корич') || hay.includes('brown')) {
-    src = FANCY_IMAGE_MAP.cognac;
-    sat = 0.86;
-    bright = 0.86;
-    contrast = 1.08;
-    if (hay.includes('pinkish') || hay.includes('розов')) {
-      hueDeg -= 18;
-      sat *= 1.06;
-    } else if (hay.includes('yellowish') || hay.includes('желт')) {
-      hueDeg += 12;
-    }
-  } else if (
-    family.includes('коньяч') ||
-    family.includes('шампан') ||
-    hay.includes('cognac') ||
-    hay.includes('champagne')
-  ) {
-    src = FANCY_IMAGE_MAP.cognac;
-    if (hay.includes('champagne') || hay.includes('шампан')) {
-      sat *= 0.78;
-      bright *= 1.08;
-    }
-  } else if (family.includes('жёлт') || family.includes('желт') || hay.includes('yellow')) {
-    src = FANCY_IMAGE_MAP.yellow;
-    if (hay.includes('orangy') || hay.includes('оранж')) {
-      hueDeg -= 14;
-      sat *= 1.12;
-    } else if (hay.includes('greenish') || hay.includes('зелен')) {
-      hueDeg += 16;
-    } else if (hay.includes('brownish') || hay.includes('корич')) {
-      hueDeg -= 10;
-      sat *= 0.82;
-      bright *= 0.9;
-    }
-  } else {
-    src = SHAPE_IMAGE_MAP[diamond.shape] || FANCY_IMAGE_MAP.yellow;
-  }
-
-  // Apply intensity calibration (skip for black/gray where value is already calibrated)
-  const isAchromatic =
-    family.includes('чёрн') ||
-    family.includes('черн') ||
-    family.includes('сер') ||
-    hay.includes('black') ||
-    hay.includes('gray') ||
-    hay.includes('grey');
-
-  if (!isAchromatic) {
+  // Use native colored macro photographs ONLY when BOTH shape AND color match natively!
+  const nativeColorFilter = (() => {
+    const parts: string[] = [];
     switch (intensity) {
       case 'Light':
-        sat *= 0.56;
-        bright *= 1.07;
+        parts.push('saturate(0.62)', 'brightness(1.06)');
         break;
       case 'Fancy Light':
-        sat *= 0.74;
-        bright *= 1.04;
+        parts.push('saturate(0.78)', 'brightness(1.03)');
         break;
       case 'Fancy Intense':
-        sat *= 1.18;
-        contrast *= 1.04;
+        parts.push('saturate(1.16)', 'contrast(1.04)');
         break;
       case 'Fancy Vivid':
-        sat *= 1.36;
-        contrast *= 1.06;
+        parts.push('saturate(1.30)', 'contrast(1.06)');
         break;
       case 'Fancy Deep':
-        sat *= 1.16;
-        bright *= 0.85;
-        contrast *= 1.08;
+        parts.push('saturate(1.14)', 'brightness(0.86)', 'contrast(1.08)');
         break;
       case 'Fancy Dark':
-        sat *= 0.92;
-        bright *= 0.72;
-        contrast *= 1.14;
+        parts.push('saturate(0.92)', 'brightness(0.74)', 'contrast(1.12)');
         break;
       default:
         break;
     }
+    return parts.length > 0 ? parts.join(' ') : undefined;
+  })();
+
+  if (diamond.shape === 'Pear' && colorKey === 'pink') {
+    return {
+      mode: 'native-photo',
+      src: FANCY_IMAGE_MAP.pink,
+      filter: nativeColorFilter,
+      palette,
+      label,
+    };
+  }
+  if (
+    (diamond.shape === 'Oval' || diamond.shape === 'Moval') &&
+    (colorKey === 'brown' || colorKey === 'cognac' || colorKey === 'champagne')
+  ) {
+    return {
+      mode: 'native-photo',
+      src: FANCY_IMAGE_MAP.cognac,
+      filter:
+        colorKey === 'champagne'
+          ? 'saturate(0.75) brightness(1.08)'
+          : nativeColorFilter,
+      palette,
+      label,
+    };
+  }
+  if (
+    (diamond.shape === 'Emerald' || diamond.shape === 'Octagon') &&
+    colorKey === 'blue'
+  ) {
+    return {
+      mode: 'native-photo',
+      src: FANCY_IMAGE_MAP.blue,
+      filter: nativeColorFilter,
+      palette,
+      label,
+    };
+  }
+  if (diamond.shape === 'Radiant' && colorKey === 'yellow') {
+    return {
+      mode: 'native-photo',
+      src: FANCY_IMAGE_MAP.yellow,
+      filter: nativeColorFilter,
+      palette,
+      label,
+    };
+  }
+  if (
+    diamond.shape === 'Asscher' &&
+    (colorKey === 'green' || colorKey === 'chameleon')
+  ) {
+    return {
+      mode: 'native-photo',
+      src: FANCY_IMAGE_MAP.green,
+      filter:
+        colorKey === 'chameleon'
+          ? 'hue-rotate(-26deg) saturate(0.84) brightness(0.95)'
+          : nativeColorFilter,
+      palette,
+      label,
+    };
   }
 
-  const filterParts: string[] = [];
-  if (Math.abs(hueDeg) >= 1) filterParts.push(`hue-rotate(${Math.round(hueDeg)}deg)`);
-  if (Math.abs(sat - 1) >= 0.02) filterParts.push(`saturate(${sat.toFixed(2)})`);
-  if (Math.abs(bright - 1) >= 0.02) filterParts.push(`brightness(${bright.toFixed(2)})`);
-  if (Math.abs(contrast - 1) >= 0.02) filterParts.push(`contrast(${contrast.toFixed(2)})`);
+  // For Round, Oval, Cushion, Emerald, Pear in ANY other color -> exact-shape white macro +
+  // diamond-only optical glaze (zero color bleed onto the background stone pedestal!)
+  if (macroMatch) {
+    return {
+      mode: 'tinted-macro',
+      src: macroMatch.whiteMacroSrc,
+      maskShape: macroMatch.maskShape,
+      palette,
+      label,
+    };
+  }
 
-  const shadeText = parsed.isSpecificShade
-    ? parsed.canonicalColor
-    : diamond.colorFamily || diamond.color;
-
+  // For Princess, Heart, Marquise, Radiant (non-yellow), Asscher (non-green), antique & specialty cuts ->
+  // exact-shape studio-lit faceted gem rendering calibrated to exact color & intensity
   return {
-    src,
-    filter: filterParts.length > 0 ? filterParts.join(' ') : undefined,
-    label: `Студийное фото · ${shadeText}`,
+    mode: 'faceted-svg',
+    src: SHAPE_IMAGE_MAP[diamond.shape] || SHAPE_IMAGE_MAP.Round,
+    palette,
+    label,
   };
 }

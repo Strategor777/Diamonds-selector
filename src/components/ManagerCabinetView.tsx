@@ -35,9 +35,8 @@ import {
   getEffectiveCostPrice,
   getFancyDiamondImage,
 } from '../data/diamonds';
-import { getStudioFallbackImage } from '../lib/catalogEngine';
-import { getCalibratedStudioVisual } from '../lib/certVerification';
 import { classifyColorFamily } from '../lib/diamondMapper';
+import { FIRESTORE_UPGRADE_URL } from '../lib/firebase';
 import type { RegistrySyncProgress } from '../lib/catalogPersistence';
 import type { GoogleAuthErrorInfo } from '../lib/googleAuth';
 import {
@@ -54,6 +53,7 @@ import { CertBatchVerifyModal } from './CertBatchVerifyModal';
 import type { ExcelImportMode } from './ExcelImportModal';
 import { NumericInput } from './NumericInput';
 import { PaginationBar } from './PaginationBar';
+import { StudioDiamondImage } from './StudioDiamondImage';
 
 export interface BulkAssortmentPatch {
   directory?: 'white' | 'fancy';
@@ -768,8 +768,19 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
           )}
 
           {cloudStatusMessage && !isSyncingCloud && (
-            <div className="px-3.5 py-2.5 rounded-lg bg-[#F4F7FB] border border-[#CBD5E1] text-xs text-[#1B365D]">
-              {cloudStatusMessage}
+            <div className="px-3.5 py-2.5 rounded-lg bg-[#F4F7FB] border border-[#CBD5E1] text-xs text-[#1B365D] flex flex-wrap items-center justify-between gap-2">
+              <span>{cloudStatusMessage}</span>
+              {cloudStatusMessage.includes('Firestore') && (
+                <a
+                  href={FIRESTORE_UPGRADE_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-white border border-[#CBD5E1] text-[#1B365D] hover:bg-[#EDF2F7] font-medium whitespace-nowrap shrink-0"
+                >
+                  Открыть настройки квоты Firebase
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
             </div>
           )}
 
@@ -1122,34 +1133,13 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                       ? d.markupValue
                       : draftConfig.value;
 
-                  const studioVis = getCalibratedStudioVisual(d);
-                  const thumbSrc = d.useStudioPhoto ? studioVis.src : d.imageUrl;
-
                   return (
                     <tr key={d.id} className="hover:bg-[#FAFAFA] align-middle">
                       <td className="p-3.5">
                         <div className="flex items-center gap-3">
-                          <img
-                            src={thumbSrc}
-                            alt={d.sku}
-                            referrerPolicy="no-referrer"
-                            style={
-                              d.useStudioPhoto && studioVis.filter
-                                ? { filter: studioVis.filter }
-                                : undefined
-                            }
-                            onError={(e) => {
-                              const fallback = studioVis.src || getStudioFallbackImage(d);
-                              if (e.currentTarget.src !== fallback && !e.currentTarget.dataset.fb) {
-                                e.currentTarget.dataset.fb = '1';
-                                e.currentTarget.src = fallback;
-                                if (studioVis.filter) {
-                                  e.currentTarget.style.filter = studioVis.filter;
-                                }
-                              }
-                            }}
-                            className="w-11 h-11 rounded object-contain p-0.5 border border-[#E4E6EB] bg-[#F8F9FB] shrink-0"
-                          />
+                          <div className="w-11 h-11 rounded overflow-hidden border border-[#E4E6EB] bg-[#F8F9FB] shrink-0">
+                            <StudioDiamondImage diamond={d} compact />
+                          </div>
                           <div className="min-w-0">
                             <div className="font-mono font-semibold text-[#111317] truncate">
                               {d.sku}

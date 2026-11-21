@@ -15,8 +15,8 @@ import {
   formatStonePrice,
   getColorHexTint,
 } from '../data/diamonds';
-import { getCalibratedStudioVisual } from '../lib/certVerification';
 import { Diamond, OrderRequest, PriceCurrency } from '../types/diamond';
+import { StudioDiamondImage } from './StudioDiamondImage';
 
 interface CartViewProps {
   diamonds: Diamond[];
@@ -333,9 +333,6 @@ export const CartView: React.FC<CartViewProps> = ({
                   ? getColorHexTint(diamond.color, diamond.colorFamily).deep
                   : null;
 
-                const studioVis = getCalibratedStudioVisual(diamond);
-                const thumbSrc = diamond.useStudioPhoto ? studioVis.src : diamond.imageUrl;
-
                 return (
                   <div
                     key={diamond.id}
@@ -347,27 +344,7 @@ export const CartView: React.FC<CartViewProps> = ({
                         onClick={() => onInspect(diamond, 'photo')}
                         className="w-16 h-16 rounded-lg overflow-hidden border border-[#E4E6EB] bg-[#F8F9FB] shrink-0"
                       >
-                        <img
-                          src={thumbSrc}
-                          alt={diamond.sku}
-                          referrerPolicy="no-referrer"
-                          style={
-                            diamond.useStudioPhoto && studioVis.filter
-                              ? { filter: studioVis.filter }
-                              : undefined
-                          }
-                          onError={(e) => {
-                            const fallback = studioVis.src;
-                            if (e.currentTarget.src !== fallback && !e.currentTarget.dataset.fb) {
-                              e.currentTarget.dataset.fb = '1';
-                              e.currentTarget.src = fallback;
-                              if (studioVis.filter) {
-                                e.currentTarget.style.filter = studioVis.filter;
-                              }
-                            }
-                          }}
-                          className="w-full h-full object-contain p-1"
-                        />
+                        <StudioDiamondImage diamond={diamond} compact />
                       </button>
 
                       <div className="min-w-0 space-y-1">

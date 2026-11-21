@@ -278,25 +278,42 @@ export function getFancyDiamondImage(
   fallbackShape: DiamondShape
 ): string {
   const hay = `${color} ${colorFamily || ''}`.toLowerCase();
-  if (hay.includes('хамелеон') || hay.includes('chameleon')) {
-    return FANCY_IMAGE_MAP.green;
-  }
-  if (hay.includes('розов') || hay.includes('pink') || hay.includes('rose') || hay.includes('пурпур') || hay.includes('фиолет') || hay.includes('purple') || hay.includes('красн') || hay.includes('red')) {
+  if (
+    fallbackShape === 'Pear' &&
+    (hay.includes('розов') || hay.includes('pink') || hay.includes('rose'))
+  ) {
     return FANCY_IMAGE_MAP.pink;
   }
-  if (hay.includes('син') || hay.includes('голуб') || hay.includes('blue') || hay.includes('aqua')) {
-    return FANCY_IMAGE_MAP.blue;
-  }
-  if (hay.includes('зел') || hay.includes('green') || hay.includes('mint')) {
-    return FANCY_IMAGE_MAP.green;
-  }
-  if (hay.includes('жёлт') || hay.includes('желт') || hay.includes('yellow') || hay.includes('canary') || hay.includes('lemon')) {
-    return FANCY_IMAGE_MAP.yellow;
-  }
-  if (hay.includes('коньяч') || hay.includes('шампан') || hay.includes('корич') || hay.includes('brown') || hay.includes('champagne') || hay.includes('cognac') || hay.includes('оранж') || hay.includes('orange')) {
+  if (
+    (fallbackShape === 'Oval' || fallbackShape === 'Moval') &&
+    (hay.includes('коньяч') ||
+      hay.includes('шампан') ||
+      hay.includes('корич') ||
+      hay.includes('brown') ||
+      hay.includes('champagne') ||
+      hay.includes('cognac'))
+  ) {
     return FANCY_IMAGE_MAP.cognac;
   }
-  return SHAPE_IMAGE_MAP[fallbackShape];
+  if (
+    (fallbackShape === 'Emerald' || fallbackShape === 'Octagon') &&
+    (hay.includes('син') || hay.includes('голуб') || hay.includes('blue') || hay.includes('aqua'))
+  ) {
+    return FANCY_IMAGE_MAP.blue;
+  }
+  if (
+    fallbackShape === 'Radiant' &&
+    (hay.includes('жёлт') || hay.includes('желт') || hay.includes('yellow') || hay.includes('canary') || hay.includes('lemon'))
+  ) {
+    return FANCY_IMAGE_MAP.yellow;
+  }
+  if (
+    fallbackShape === 'Asscher' &&
+    (hay.includes('зел') || hay.includes('green') || hay.includes('mint') || hay.includes('хамелеон') || hay.includes('chameleon'))
+  ) {
+    return FANCY_IMAGE_MAP.green;
+  }
+  return SHAPE_IMAGE_MAP[fallbackShape] || SHAPE_IMAGE_MAP.Round;
 }
 
 export function formatStonePrice(

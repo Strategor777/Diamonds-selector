@@ -16,7 +16,6 @@ import {
 } from 'lucide-react';
 import {
   SHAPE_LABELS_RU,
-  SHAPE_SHORT_RU,
   formatStonePrice,
   getColorHexTint,
 } from '../data/diamonds';
@@ -29,14 +28,11 @@ import {
   verifyCertificateColor,
 } from '../lib/certVerification';
 import type { CertVerifyResponse } from '../lib/certVerifyTypes';
-import {
-  isNonImageMediaUrl,
-  parseFancyColor,
-  sanitizeMediaUrl,
-} from '../lib/fancyColorParser';
+import { parseFancyColor } from '../lib/fancyColorParser';
 import { Diamond } from '../types/diamond';
 import { DiamondShapeIcon } from './DiamondShapeIcon';
 import { DiamondTurntable360 } from './DiamondTurntable360';
+import { StudioDiamondImage } from './StudioDiamondImage';
 
 interface DiamondDetailModalProps {
   diamond: Diamond | null;
@@ -66,7 +62,7 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
   const [activeTab, setActiveTab] = useState<'photo' | 'video' | 'cert'>(initialTab);
   const [loupeEnabled, setLoupeEnabled] = useState(false);
   const [loupePos, setLoupePos] = useState({ x: 50, y: 50 });
-  const [imgStage, setImgStage] = useState<0 | 1 | 2>(0);
+  const [isShowingStudio, setIsShowingStudio] = useState(false);
 
   // Automatic certificate color verification state
   const [verifyState, setVerifyState] = useState<
@@ -78,22 +74,12 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
   const [verifyNotice, setVerifyNotice] = useState<string | null>(null);
 
   const studioVisual = diamond ? getCalibratedStudioVisual(diamond) : undefined;
-  const studioFallbackSrc = studioVisual?.src;
-  const rawSanitized = diamond ? sanitizeMediaUrl(diamond.imageUrl) : undefined;
   const externalPhotoAvailable = diamond ? hasExternalSupplierPhoto(diamond) : false;
-  const primarySrc =
-    diamond &&
-    !diamond.useStudioPhoto &&
-    rawSanitized &&
-    !isNonImageMediaUrl(rawSanitized)
-      ? rawSanitized
-      : undefined;
 
   useEffect(() => {
     setActiveTab(initialTab);
     setLoupeEnabled(false);
-    setImgStage(primarySrc && primarySrc !== studioFallbackSrc ? 0 : 1);
-  }, [diamond?.id, initialTab, primarySrc, studioFallbackSrc, diamond?.useStudioPhoto]);
+  }, [diamond?.id, initialTab]);
 
   useEffect(() => {
     setVerifyNotice(null);
@@ -170,10 +156,6 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
 
   if (!diamond || !studioVisual) return null;
 
-  const activeImgSrc =
-    imgStage === 0 ? primarySrc : imgStage === 1 ? studioFallbackSrc : undefined;
-  const isShowingStudio = imgStage === 1;
-
   const pricePerCarat =
     diamond.carat > 0 ? Math.round(diamond.priceUsd / diamond.carat) : diamond.priceUsd;
   const isColoredStone =
@@ -244,20 +226,15 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
         useStudioPhoto: preferStudio,
       });
     }
-    setImgStage(preferStudio ? 1 : primarySrc ? 0 : 1);
+    setIsShowingStudio(preferStudio);
   };
 
-  const imgStyle: React.CSSProperties | undefined = (() => {
-    const style: React.CSSProperties = {};
-    if (loupeEnabled) {
-      style.transform = 'scale(2.4)';
-      style.transformOrigin = `${loupePos.x}% ${loupePos.y}%`;
-    }
-    if (isShowingStudio && studioVisual.filter) {
-      style.filter = studioVisual.filter;
-    }
-    return Object.keys(style).length > 0 ? style : undefined;
-  })();
+  const loupeZoomStyle: React.CSSProperties | undefined = loupeEnabled
+    ? {
+        transform: 'scale(2.4)',
+        transformOrigin: `${loupePos.x}% ${loupePos.y}%`,
+      }
+    : undefined;
 
   return (
     <div
@@ -400,23 +377,12 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                     loupeEnabled ? 'cursor-zoom-in' : ''
                   }`}
                 >
-                  {activeImgSrc ? (
-                    <img
-                      src={activeImgSrc}
-                      alt={`${SHAPE_SHORT_RU[diamond.shape]} ${diamond.carat.toFixed(2)} ct`}
-                      referrerPolicy="no-referrer"
-                      onError={() => setImgStage((prev) => (prev === 0 ? 1 : 2))}
-                      style={imgStyle}
-                      className="w-full h-full object-contain p-3 transition-transform duration-150 ease-out"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-[#1B365D]">
-                      <DiamondShapeIcon shape={diamond.shape} className="w-24 h-24" filled />
-                      <span className="text-sm font-medium text-[#5A606D]">
-                        {SHAPE_LABELS_RU[diamond.shape]}
-                      </span>
-                    </div>
-                  )}
+                  <StudioDiamondImage
+                    diamond={diamond}
+                    zoomStyle={loupeZoomStyle}
+                    onSourceModeChange={setIsShowingStudio}
+                    className="transition-transform duration-150 ease-out"
+                  />
 
                   <div className="absolute bottom-2.5 right-2.5 max-w-[calc(100%-20px)] truncate px-2.5 py-1 bg-white/92 backdrop-blur-sm border border-[#E4E6EB] rounded text-xs font-mono tabular-nums text-[#111317]">
                     {diamond.lengthMm.toFixed(2)} × {diamond.widthMm.toFixed(2)} ×{' '}

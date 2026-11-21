@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   Camera,
   Check,
@@ -14,15 +14,10 @@ import {
   formatStonePrice,
   getColorHexTint,
 } from '../data/diamonds';
-import { getCalibratedStudioVisual } from '../lib/certVerification';
-import {
-  isNonImageMediaUrl,
-  parseFancyColor,
-  sanitizeMediaUrl,
-} from '../lib/fancyColorParser';
+import { parseFancyColor } from '../lib/fancyColorParser';
 import { Diamond } from '../types/diamond';
-import { DiamondShapeIcon } from './DiamondShapeIcon';
 import { DiamondTurntable360 } from './DiamondTurntable360';
+import { StudioDiamondImage } from './StudioDiamondImage';
 
 interface DiamondCardProps {
   diamond: Diamond;
@@ -45,26 +40,7 @@ export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
   onToggleCart,
   onFindPair,
 }) => {
-  const studioVisual = getCalibratedStudioVisual(diamond);
-  const studioFallbackSrc = studioVisual.src;
-  const rawSanitized = sanitizeMediaUrl(diamond.imageUrl);
-  const primarySrc =
-    !diamond.useStudioPhoto && rawSanitized && !isNonImageMediaUrl(rawSanitized)
-      ? rawSanitized
-      : undefined;
-  const initialStage: 0 | 1 | 2 =
-    primarySrc && primarySrc !== studioFallbackSrc ? 0 : 1;
-
-  const [imgStage, setImgStage] = useState<0 | 1 | 2>(initialStage);
   const [mediaView, setMediaView] = useState<'photo' | 'video'>('photo');
-
-  useEffect(() => {
-    setImgStage(primarySrc && primarySrc !== studioFallbackSrc ? 0 : 1);
-  }, [diamond.id, primarySrc, studioFallbackSrc, diamond.useStudioPhoto]);
-
-  const activeImgSrc =
-    imgStage === 0 ? primarySrc : imgStage === 1 ? studioFallbackSrc : undefined;
-  const isShowingStudio = imgStage === 1;
 
   const pricePerCarat =
     diamond.carat > 0 ? Math.round(diamond.priceUsd / diamond.carat) : diamond.priceUsd;
@@ -85,36 +61,12 @@ export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
       <div className="relative aspect-square bg-[#F8F9FB] overflow-hidden border-b border-[#F0F2F5]">
         {mediaView === 'video' ? (
           <DiamondTurntable360 diamond={diamond} compact />
-        ) : activeImgSrc ? (
-          <img
-            src={activeImgSrc}
-            alt={`${stoneTitlePrefix}${SHAPE_SHORT_RU[diamond.shape]} ${diamond.carat.toFixed(2)} ct ${diamond.color} ${diamond.clarity}`}
-            loading="lazy"
-            decoding="async"
-            referrerPolicy="no-referrer"
-            onError={() => {
-              setImgStage((prev) => (prev === 0 ? 1 : 2));
-            }}
-            onClick={() => onInspect(diamond, 'photo')}
-            style={
-              isShowingStudio && studioVisual.filter
-                ? { filter: studioVisual.filter }
-                : undefined
-            }
-            className="w-full h-full object-contain p-2 cursor-pointer transition-transform duration-300 ease-out group-hover:scale-[1.03]"
-          />
         ) : (
-          <button
-            type="button"
+          <StudioDiamondImage
+            diamond={diamond}
             onClick={() => onInspect(diamond, 'photo')}
-            className="w-full h-full flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-[#F4F6F9] to-[#E7EBEF] text-[#1B365D]"
-          >
-            <DiamondShapeIcon shape={diamond.shape} className="w-16 h-16" filled />
-            <span className="text-xs font-medium text-[#5A606D]">
-              {stoneTitlePrefix}
-              {SHAPE_SHORT_RU[diamond.shape]} · {diamond.carat.toFixed(2)} ct
-            </span>
-          </button>
+            className="cursor-pointer transition-transform duration-300 ease-out group-hover:scale-[1.03]"
+          />
         )}
 
         {/* Inline Photo / Video Switcher */}

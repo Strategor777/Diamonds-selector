@@ -83,52 +83,75 @@ export const CertBatchVerifyModal: React.FC<CertBatchVerifyModalProps> = ({
       notFoundCount: 0,
     });
 
+    const stoneById = new Map(targetStones.map((s) => [s.id, s]));
+    let totalAutoApplied = 0;
+    let hitRateLimit = false;
+
     try {
       const resultsMap = await verifyBatchCertificateColors(targetStones, {
         signal: controller.signal,
-        onProgress: setProgress,
+        onProgress: (p) => {
+          if (p.rateLimited) hitRateLimit = true;
+          setProgress(p);
+        },
+        onChunkComplete: (chunkResults) => {
+          const chunkUpdated: Diamond[] = [];
+          const chunkManual: { stone: Diamond; result: CertVerifyResponse }[] = [];
+
+          for (const [stoneId, res] of chunkResults.entries()) {
+            const stone = stoneById.get(stoneId);
+            if (!stone) continue;
+
+            if (res.status === 'verified' && res.normalizedColor) {
+              const colorChanged =
+                stone.color.trim().toLowerCase() !==
+                res.normalizedColor.trim().toLowerCase();
+              const useStudio =
+                photoPolicy === 'always-studio'
+                  ? true
+                  : photoPolicy === 'keep'
+                    ? false
+                    : stone.useStudioPhoto || !hasExternalSupplierPhoto(stone) || colorChanged;
+              chunkUpdated.push(
+                applyVerifiedColorToDiamond(stone, res, {
+                  useStudioPhoto: useStudio,
+                  source: 'auto',
+                })
+              );
+            } else if (res.status === 'manual_required' || res.status === 'not_found') {
+              chunkManual.push({ stone, result: res });
+            }
+          }
+
+          if (chunkUpdated.length > 0) {
+            totalAutoApplied += chunkUpdated.length;
+            onBatchApplyDiamonds(chunkUpdated);
+          }
+          if (chunkManual.length > 0) {
+            setManualItems((prev) => [...prev, ...chunkManual]);
+          }
+        },
       });
 
-      const updatedDiamonds: Diamond[] = [];
-      const needsManual: { stone: Diamond; result: CertVerifyResponse }[] = [];
+      const manualTotal = Array.from(resultsMap.values()).filter(
+        (r) => r.status === 'manual_required' || r.status === 'not_found'
+      ).length;
 
-      for (const stone of targetStones) {
-        const res = resultsMap.get(stone.id);
-        if (!res) continue;
-
-        if (res.status === 'verified' && res.normalizedColor) {
-          const colorChanged =
-            stone.color.trim().toLowerCase() !==
-            res.normalizedColor.trim().toLowerCase();
-          const useStudio =
-            photoPolicy === 'always-studio'
-              ? true
-              : photoPolicy === 'keep'
-                ? false
-                : stone.useStudioPhoto || !hasExternalSupplierPhoto(stone) || colorChanged;
-          updatedDiamonds.push(
-            applyVerifiedColorToDiamond(stone, res, {
-              useStudioPhoto: useStudio,
-              source: 'auto',
-            })
-          );
-        } else if (res.status === 'manual_required' || res.status === 'not_found') {
-          needsManual.push({ stone, result: res });
-        }
+      if (hitRateLimit) {
+        setAppliedSummary(
+          totalAutoApplied > 0
+            ? `Сохранено ${totalAutoApplied} подтверждённых камн., затем достигнут минутный лимит запросов (60/мин). Подождите минуту и продолжите — проверенные камни уже пропустятся автоматически.`
+            : 'Достигнут минутный лимит запросов к серверу верификации (60/мин). Подождите минуту и запустите следующий пакет.'
+        );
+      } else {
+        setAppliedSummary(
+          totalAutoApplied > 0
+            ? `Автоматически подтверждён цвет для ${totalAutoApplied} камн. и обновлены студийные фото (сохранено по пакетам).`
+            : manualTotal > 0
+              ? `Проверено ${resultsMap.size} сертификатов. Сайты лабораторий запросили ручное подтверждение (CAPTCHA) — вы можете уточнить цвет ниже по прямым ссылкам на бланки.`
+              : 'Проверка завершена.'
+        );
       }
-
-      if (updatedDiamonds.length > 0) {
-        onBatchApplyDiamonds(updatedDiamonds);
-      }
-
-      setManualItems(needsManual);
-      setAppliedSummary(
-        updatedDiamonds.length > 0
-          ? `Автоматически подтверждён цвет для ${updatedDiamonds.length} камн. и обновлены студийные фото.`
-          : needsManual.length > 0
-            ? `Проверено ${resultsMap.size} сертификатов. Сайты лабораторий запросили ручное подтверждение (CAPTCHA) — вы можете уточнить цвет ниже по прямым ссылкам на бланки.`
-            : 'Проверка завершена.'
-      );
     } finally {
       setIsRunning(false);
       abortRef.current = null;

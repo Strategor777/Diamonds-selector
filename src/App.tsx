@@ -474,6 +474,13 @@ export default function App() {
         });
         if (!active || !cloudSnap) return;
 
+        if (cloudSnap.quotaExceeded) {
+          setCloudStatusMessage(
+            'Достигнут дневной бесплатный лимит чтений Firestore. Каталог работает из локальной базы браузера; облачная синхронизация возобновится после сброса квоты завтра или расширения тарифа.'
+          );
+          return;
+        }
+
         if (cloudSnap.version > localVersion) {
           const normalizedCloud = normalizeCatalogDiamonds(cloudSnap.catalog);
           const nextSuppliers = rebuildSupplierFeeds(
@@ -524,6 +531,13 @@ export default function App() {
           includeManagerData: true,
         });
         if (!active || !cloudAdmin) return;
+
+        if (cloudAdmin.quotaExceeded) {
+          setCloudStatusMessage(
+            'Достигнут дневной бесплатный лимит чтений Firestore. Каталог работает из локальной базы браузера; облачная синхронизация возобновится после сброса квоты завтра или расширения тарифа.'
+          );
+          return;
+        }
 
         if (cloudAdmin.version > registryVersion) {
           const normalizedAdmin = normalizeCatalogDiamonds(cloudAdmin.catalog);

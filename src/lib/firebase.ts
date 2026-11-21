@@ -55,6 +55,27 @@ function initFirebaseServices() {
 
 export const { app, auth, db } = initFirebaseServices();
 
+export const FIRESTORE_UPGRADE_URL = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore/databases/${firebaseConfig.firestoreDatabaseId}/data?openUpgradeDialog=true`;
+
+export function isFirestoreQuotaError(error: unknown): boolean {
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as { code?: unknown }).code || '').toLowerCase()
+      : '';
+  const msg =
+    error instanceof Error
+      ? error.message.toLowerCase()
+      : String(error || '').toLowerCase();
+
+  return (
+    code.includes('resource-exhausted') ||
+    msg.includes('quota limit exceeded') ||
+    msg.includes('quota exceeded') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('free daily read units')
+  );
+}
+
 export function isVerifiedAdminEmail(email?: string | null, emailVerified?: boolean): boolean {
   return Boolean(
     email &&

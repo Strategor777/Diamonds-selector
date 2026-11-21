@@ -28,12 +28,58 @@ import {
   auth,
   db,
   handleFirestoreError,
+  isFirestoreQuotaError,
   isVerifiedAdminEmail,
 } from './firebase';
 
 const IDB_NAME = 'diamonds_selector_registry_v2';
 const IDB_STORE = 'registry_kv';
 const IDB_VERSION = 1;
+const QUOTA_COOLDOWN_KEY = 'diamonds_selector_fs_quota_until_v1';
+const LAST_SYNC_CHECK_KEY = 'diamonds_selector_fs_last_check_v1';
+const QUOTA_COOLDOWN_MS = 15 * 60 * 1000;
+const SYNC_CHECK_TTL_MS = 5 * 60 * 1000;
+
+export function isCloudQuotaInCooldown(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const until = Number(window.sessionStorage.getItem(QUOTA_COOLDOWN_KEY) || 0);
+    return Number.isFinite(until) && until > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+function markCloudQuotaExceeded() {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(
+      QUOTA_COOLDOWN_KEY,
+      String(Date.now() + QUOTA_COOLDOWN_MS)
+    );
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function isRecentCloudCheck(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const last = Number(window.sessionStorage.getItem(LAST_SYNC_CHECK_KEY) || 0);
+    return Number.isFinite(last) && Date.now() - last < SYNC_CHECK_TTL_MS;
+  } catch {
+    return false;
+  }
+}
+
+function markCloudCheckSucceeded() {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(LAST_SYNC_CHECK_KEY, String(Date.now()));
+  } catch {
+    // ignore storage errors
+  }
+}
 
 const SHARD_SIZE = 400; // <= 400 compact stones per Firestore doc (< 350 KB, well under 1 MB limit)
 const CONCURRENT_SHARD_OPS = 6;
@@ -279,19 +325,48 @@ export interface CloudLoadResult {
   catalog: Diamond[];
   suppliers?: SupplierFeed[];
   pricingConfig?: PricingConfig;
+  quotaExceeded?: boolean;
 }
 
 export async function loadCloudRegistry(
   options?: {
     includeManagerData?: boolean;
     cachedVersion?: number;
+    force?: boolean;
   }
 ): Promise<CloudLoadResult | null> {
+  if (isCloudQuotaInCooldown()) {
+    return {
+      version: options?.cachedVersion || 0,
+      catalog: [],
+      quotaExceeded: true,
+    };
+  }
+
+  // Throttle automatic background checks when local data is already present to conserve daily read units
+  if (
+    !options?.force &&
+    !options?.includeManagerData &&
+    (options?.cachedVersion || 0) > 0 &&
+    isRecentCloudCheck()
+  ) {
+    return null;
+  }
+
   const metaPath = 'registry_meta/current';
   let metaSnap;
   try {
     metaSnap = await getDoc(doc(db, 'registry_meta', 'current'));
+    markCloudCheckSucceeded();
   } catch (err) {
+    if (isFirestoreQuotaError(err)) {
+      markCloudQuotaExceeded();
+      return {
+        version: options?.cachedVersion || 0,
+        catalog: [],
+        quotaExceeded: true,
+      };
+    }
     handleFirestoreError(err, OperationType.GET, metaPath);
   }
 
@@ -338,6 +413,14 @@ export async function loadCloudRegistry(
     );
     shardSnaps = await getDocs(q);
   } catch (err) {
+    if (isFirestoreQuotaError(err)) {
+      markCloudQuotaExceeded();
+      return {
+        version: options?.cachedVersion || 0,
+        catalog: [],
+        quotaExceeded: true,
+      };
+    }
     handleFirestoreError(err, OperationType.LIST, shardsPath);
   }
 
@@ -373,6 +456,16 @@ export async function loadCloudRegistry(
         };
       }
     } catch (err) {
+      if (isFirestoreQuotaError(err)) {
+        markCloudQuotaExceeded();
+        return {
+          version,
+          catalog: diamonds,
+          suppliers,
+          pricingConfig,
+          quotaExceeded: true,
+        };
+      }
       handleFirestoreError(err, OperationType.GET, 'pricing_config/default');
     }
 
@@ -395,6 +488,16 @@ export async function loadCloudRegistry(
         };
       });
     } catch (err) {
+      if (isFirestoreQuotaError(err)) {
+        markCloudQuotaExceeded();
+        return {
+          version,
+          catalog: diamonds,
+          suppliers,
+          pricingConfig,
+          quotaExceeded: true,
+        };
+      }
       handleFirestoreError(err, OperationType.LIST, 'suppliers');
     }
 
@@ -428,6 +531,16 @@ export async function loadCloudRegistry(
         }
       }
     } catch (err) {
+      if (isFirestoreQuotaError(err)) {
+        markCloudQuotaExceeded();
+        return {
+          version,
+          catalog: diamonds,
+          suppliers,
+          pricingConfig,
+          quotaExceeded: true,
+        };
+      }
       handleFirestoreError(err, OperationType.LIST, 'manager_cost_shards');
     }
   }
@@ -507,6 +620,7 @@ export async function publishCloudRegistry(params: {
       try {
         await setDoc(doc(db, 'public_catalog_shards', shardId), payload);
       } catch (err) {
+        if (isFirestoreQuotaError(err)) throw err;
         handleFirestoreError(err, OperationType.WRITE, `public_catalog_shards/${shardId}`);
       }
     });
@@ -523,100 +637,120 @@ export async function publishCloudRegistry(params: {
       try {
         await setDoc(doc(db, 'manager_cost_shards', shardId), payload);
       } catch (err) {
+        if (isFirestoreQuotaError(err)) throw err;
         handleFirestoreError(err, OperationType.WRITE, `manager_cost_shards/${shardId}`);
       }
     });
   }
 
   // Write public storefront shards (skip when cleared to 0 stones)
-  if (publicTasks.length > 0) {
-    await runWithConcurrency(publicTasks, CONCURRENT_SHARD_OPS, (completed, total) => {
-      params.onProgress?.({ phase: 'cloud-public', completed, total });
-    });
-  }
-
-  // Write private manager wholesale cost shards
-  if (costTasks.length > 0) {
-    await runWithConcurrency(costTasks, CONCURRENT_SHARD_OPS, (completed, total) => {
-      params.onProgress?.({ phase: 'cloud-costs', completed, total });
-    });
-  }
-
-  // Write pricing config & supplier feed docs
-  params.onProgress?.({ phase: 'cloud-meta', completed: 0, total: params.suppliers.length + 2 });
-
   try {
-    await setDoc(doc(db, 'pricing_config', 'default'), {
-      mode: params.pricingConfig.mode,
-      value: params.pricingConfig.value,
-      roundingStep: params.pricingConfig.roundingStep,
-      applyOnImport: params.pricingConfig.applyOnImport,
-      updatedByUid: uid,
-      updatedAt: serverTimestamp(),
-    });
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, 'pricing_config/default');
-  }
+    if (publicTasks.length > 0) {
+      await runWithConcurrency(publicTasks, CONCURRENT_SHARD_OPS, (completed, total) => {
+        params.onProgress?.({ phase: 'cloud-public', completed, total });
+      });
+    }
 
-  const activeSupplierIds = new Set<string>();
-  for (let i = 0; i < params.suppliers.length; i++) {
-    const sup = params.suppliers[i];
-    const supId = sanitizeId(sup.id);
-    activeSupplierIds.add(supId);
+    // Write private manager wholesale cost shards
+    if (costTasks.length > 0) {
+      await runWithConcurrency(costTasks, CONCURRENT_SHARD_OPS, (completed, total) => {
+        params.onProgress?.({ phase: 'cloud-costs', completed, total });
+      });
+    }
+
+    // Write pricing config & supplier feed docs
+    params.onProgress?.({ phase: 'cloud-meta', completed: 0, total: params.suppliers.length + 2 });
+
     try {
-      await setDoc(doc(db, 'suppliers', supId), {
-        name: sup.name.slice(0, 120),
-        fileName: (sup.fileName || sup.name).slice(0, 256),
-        stoneCount: sup.stoneCount,
-        whiteCount: sup.whiteCount,
-        fancyCount: sup.fancyCount,
-        active: sup.active,
+      await setDoc(doc(db, 'pricing_config', 'default'), {
+        mode: params.pricingConfig.mode,
+        value: params.pricingConfig.value,
+        roundingStep: params.pricingConfig.roundingStep,
+        applyOnImport: params.pricingConfig.applyOnImport,
         updatedByUid: uid,
         updatedAt: serverTimestamp(),
       });
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `suppliers/${supId}`);
+      if (isFirestoreQuotaError(err)) throw err;
+      handleFirestoreError(err, OperationType.WRITE, 'pricing_config/default');
     }
-    params.onProgress?.({
-      phase: 'cloud-meta',
-      completed: i + 1,
-      total: params.suppliers.length + 2,
-    });
-  }
 
-  // Remove stale supplier documents that were cleared or deleted
-  try {
-    const existingSupSnaps = await getDocs(collection(db, 'suppliers'));
-    for (const snap of existingSupSnaps.docs) {
-      if (!activeSupplierIds.has(snap.id)) {
-        await deleteDoc(doc(db, 'suppliers', snap.id));
+    const activeSupplierIds = new Set<string>();
+    for (let i = 0; i < params.suppliers.length; i++) {
+      const sup = params.suppliers[i];
+      const supId = sanitizeId(sup.id);
+      activeSupplierIds.add(supId);
+      try {
+        await setDoc(doc(db, 'suppliers', supId), {
+          name: sup.name.slice(0, 120),
+          fileName: (sup.fileName || sup.name).slice(0, 256),
+          stoneCount: sup.stoneCount,
+          whiteCount: sup.whiteCount,
+          fancyCount: sup.fancyCount,
+          active: sup.active,
+          updatedByUid: uid,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        if (isFirestoreQuotaError(err)) throw err;
+        handleFirestoreError(err, OperationType.WRITE, `suppliers/${supId}`);
+      }
+      params.onProgress?.({
+        phase: 'cloud-meta',
+        completed: i + 1,
+        total: params.suppliers.length + 2,
+      });
+    }
+
+    // Remove stale supplier documents that were cleared or deleted
+    try {
+      const existingSupSnaps = await getDocs(collection(db, 'suppliers'));
+      for (const snap of existingSupSnaps.docs) {
+        if (!activeSupplierIds.has(snap.id)) {
+          await deleteDoc(doc(db, 'suppliers', snap.id));
+        }
+      }
+    } catch (err) {
+      if (!isFirestoreQuotaError(err)) {
+        console.warn('Stale supplier cleanup skipped:', err);
       }
     }
-  } catch (err) {
-    console.warn('Stale supplier cleanup skipped:', err);
-  }
 
-  let fancyCount = 0;
-  for (let i = 0; i < publicStones.length; i++) {
-    if (publicStones[i].directory === 'fancy' || publicStones[i].isFancyColor) {
-      fancyCount++;
+    let fancyCount = 0;
+    for (let i = 0; i < publicStones.length; i++) {
+      if (publicStones[i].directory === 'fancy' || publicStones[i].isFancyColor) {
+        fancyCount++;
+      }
     }
-  }
 
-  // Atomically flip the public manifest version last
-  try {
-    await setDoc(doc(db, 'registry_meta', 'current'), {
-      version: nextVersion,
-      totalCount: publicStones.length,
-      whiteCount: publicStones.length - fancyCount,
-      fancyCount,
-      shardCount: totalShards,
-      supplierCount: params.suppliers.filter((s) => s.active).length,
-      updatedByUid: uid,
-      updatedAt: serverTimestamp(),
-    });
+    // Atomically flip the public manifest version last
+    try {
+      await setDoc(doc(db, 'registry_meta', 'current'), {
+        version: nextVersion,
+        totalCount: publicStones.length,
+        whiteCount: publicStones.length - fancyCount,
+        fancyCount,
+        shardCount: totalShards,
+        supplierCount: params.suppliers.filter((s) => s.active).length,
+        updatedByUid: uid,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      if (isFirestoreQuotaError(err)) throw err;
+      handleFirestoreError(err, OperationType.WRITE, 'registry_meta/current');
+    }
   } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, 'registry_meta/current');
+    if (isFirestoreQuotaError(err)) {
+      markCloudQuotaExceeded();
+      params.onProgress?.({ phase: 'done', completed: 1, total: 1 });
+      return {
+        version: nextVersion,
+        cloudSynced: false,
+        message:
+          'Исчерпан дневной бесплатный лимит операций Firestore. Каталог сохранён локально в браузере; облачная синхронизация возобновится завтра после сброса квоты или после расширения тарифа базы.',
+      };
+    }
+    throw err;
   }
 
   params.onProgress?.({ phase: 'done', completed: 1, total: 1 });
@@ -670,6 +804,10 @@ export async function saveCloudOrder(order: OrderRequest): Promise<boolean> {
     await setDoc(doc(db, 'orders', orderId), payload);
     return true;
   } catch (err) {
+    if (isFirestoreQuotaError(err)) {
+      markCloudQuotaExceeded();
+      return false;
+    }
     handleFirestoreError(err, OperationType.CREATE, `orders/${orderId}`);
   }
 }
