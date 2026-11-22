@@ -572,7 +572,7 @@ export const StudioDiamondImage: React.FC<StudioDiamondImageProps> = React.memo(
       <div
         onClick={onClick}
         style={zoomStyle}
-        className={`w-full h-full flex items-center justify-center overflow-hidden ${className}`}
+        className={`relative w-full h-full min-w-0 min-h-0 flex items-center justify-center overflow-hidden ${className}`}
       >
         {showExternal && externalUrl ? (
           <img
@@ -582,7 +582,7 @@ export const StudioDiamondImage: React.FC<StudioDiamondImageProps> = React.memo(
             decoding="async"
             referrerPolicy="no-referrer"
             onError={() => setExternalFailed(true)}
-            className={`w-full h-full object-contain ${compact ? 'p-0.5' : 'p-2'}`}
+            className={`max-w-full max-h-full w-full h-full object-contain object-center block ${compact ? 'p-0.5' : 'p-2'}`}
           />
         ) : studioVisual.mode === 'native-photo' ? (
           <img
@@ -591,10 +591,10 @@ export const StudioDiamondImage: React.FC<StudioDiamondImageProps> = React.memo(
             loading={compact ? 'lazy' : undefined}
             decoding="async"
             style={studioVisual.filter ? { filter: studioVisual.filter } : undefined}
-            className={`w-full h-full object-contain ${compact ? 'p-0.5' : 'p-2'}`}
+            className={`max-w-full max-h-full w-full h-full object-contain object-center block ${compact ? 'p-0.5' : 'p-2'}`}
           />
         ) : studioVisual.mode === 'tinted-macro' ? (
-          <div className={`w-full h-full flex items-center justify-center ${compact ? 'p-0.5' : 'p-2'}`}>
+          <div className={`w-full h-full min-w-0 min-h-0 flex items-center justify-center ${compact ? 'p-0.5' : 'p-2'}`}>
             <TintedMacroStudioView visual={studioVisual} alt={altText} compact={compact} />
           </div>
         ) : (

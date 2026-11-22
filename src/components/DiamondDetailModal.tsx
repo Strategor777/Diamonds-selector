@@ -28,7 +28,7 @@ import {
   verifyCertificateColor,
 } from '../lib/certVerification';
 import type { CertVerifyResponse } from '../lib/certVerifyTypes';
-import { parseFancyColor } from '../lib/fancyColorParser';
+import { getColoredStoneDisplayInfo } from '../lib/fancyColorParser';
 import { Diamond } from '../types/diamond';
 import { DiamondShapeIcon } from './DiamondShapeIcon';
 import { DiamondTurntable360 } from './DiamondTurntable360';
@@ -158,9 +158,7 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
 
   const pricePerCarat =
     diamond.carat > 0 ? Math.round(diamond.priceUsd / diamond.carat) : diamond.priceUsd;
-  const isColoredStone =
-    Boolean(diamond.colorFamily) && diamond.colorFamily !== 'Бесцветный (D–J)';
-  const parsedFancy = isColoredStone ? parseFancyColor(diamond.color) : null;
+  const colorDisplay = getColoredStoneDisplayInfo(diamond);
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!loupeEnabled) return;
@@ -373,16 +371,18 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                   onMouseLeave={() => {
                     if (loupeEnabled) setLoupePos({ x: 50, y: 50 });
                   }}
-                  className={`relative aspect-square max-h-[460px] w-full mx-auto rounded-lg overflow-hidden border border-[#E4E6EB] bg-[#F8F9FB] ${
+                  className={`relative w-full max-w-[460px] aspect-square mx-auto rounded-lg overflow-hidden border border-[#E4E6EB] bg-[#F8F9FB] ${
                     loupeEnabled ? 'cursor-zoom-in' : ''
                   }`}
                 >
-                  <StudioDiamondImage
-                    diamond={diamond}
-                    zoomStyle={loupeZoomStyle}
-                    onSourceModeChange={setIsShowingStudio}
-                    className="transition-transform duration-150 ease-out"
-                  />
+                  <div className="absolute inset-0">
+                    <StudioDiamondImage
+                      diamond={diamond}
+                      zoomStyle={loupeZoomStyle}
+                      onSourceModeChange={setIsShowingStudio}
+                      className="transition-transform duration-150 ease-out"
+                    />
+                  </div>
 
                   <div className="absolute bottom-2.5 right-2.5 max-w-[calc(100%-20px)] truncate px-2.5 py-1 bg-white/92 backdrop-blur-sm border border-[#E4E6EB] rounded text-xs font-mono tabular-nums text-[#111317]">
                     {diamond.lengthMm.toFixed(2)} × {diamond.widthMm.toFixed(2)} ×{' '}
@@ -634,14 +634,10 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                 </div>
                 <div className="border-b border-[#F1F3F5] pb-2 min-w-0">
                   <dt className="text-xs text-[#5A606D]">
-                    {isColoredStone
-                      ? parsedFancy?.isSpecificShade
-                        ? 'Цвет и оттенок'
-                        : 'Основной цвет'
-                      : 'Цвет (D–J)'}
+                    {colorDisplay.isColored ? 'Основной цвет' : 'Цвет (D–J)'}
                   </dt>
                   <dd className="font-semibold text-[#111317] mt-0.5 flex items-center gap-1.5 min-w-0">
-                    {isColoredStone && (
+                    {colorDisplay.isColored && (
                       <span
                         aria-hidden="true"
                         className="w-2.5 h-2.5 rounded-full border border-black/15 shrink-0"
@@ -653,29 +649,32 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                         }}
                       />
                     )}
-                    <span className="truncate font-mono">
-                      {isColoredStone
-                        ? parsedFancy?.isSpecificShade
-                          ? parsedFancy.canonicalColor
-                          : diamond.colorFamily || diamond.color
-                        : diamond.color}
+                    <span className={`truncate ${colorDisplay.isColored ? '' : 'font-mono'}`}>
+                      {colorDisplay.baseColor}
                     </span>
                   </dd>
-                  {isColoredStone &&
-                    (parsedFancy?.shortCode ||
-                      diamond.fancyIntensity ||
-                      diamond.fancyOvertone) && (
+                </div>
+                {colorDisplay.isColored && colorDisplay.intensity && (
+                  <div className="border-b border-[#F1F3F5] pb-2 min-w-0">
+                    <dt className="text-xs text-[#5A606D]">Интенсивность</dt>
+                    <dd className="font-semibold text-[#111317] mt-0.5 truncate">
+                      {colorDisplay.intensity}
+                    </dd>
+                  </div>
+                )}
+                {colorDisplay.isColored && colorDisplay.shade && (
+                  <div className="border-b border-[#F1F3F5] pb-2 min-w-0">
+                    <dt className="text-xs text-[#5A606D]">Оттенок</dt>
+                    <dd className="font-semibold text-[#1B365D] mt-0.5 leading-snug break-words">
+                      {colorDisplay.shade}
+                    </dd>
+                    {colorDisplay.overtone && (
                       <div className="text-[11px] text-[#5A606D] mt-0.5 truncate">
-                        {[
-                          parsedFancy?.shortCode,
-                          diamond.fancyIntensity,
-                          diamond.fancyOvertone,
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
+                        {colorDisplay.overtone}
                       </div>
                     )}
-                </div>
+                  </div>
+                )}
                 <div className="border-b border-[#F1F3F5] pb-2">
                   <dt className="text-xs text-[#5A606D]">Чистота</dt>
                   <dd className="font-mono font-semibold text-[#111317] mt-0.5">

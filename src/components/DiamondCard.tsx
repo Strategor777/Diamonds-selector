@@ -14,7 +14,7 @@ import {
   formatStonePrice,
   getColorHexTint,
 } from '../data/diamonds';
-import { parseFancyColor } from '../lib/fancyColorParser';
+import { getColoredStoneDisplayInfo } from '../lib/fancyColorParser';
 import { Diamond } from '../types/diamond';
 import { DiamondTurntable360 } from './DiamondTurntable360';
 import { StudioDiamondImage } from './StudioDiamondImage';
@@ -44,10 +44,8 @@ export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
 
   const pricePerCarat =
     diamond.carat > 0 ? Math.round(diamond.priceUsd / diamond.carat) : diamond.priceUsd;
-  const isColoredStone =
-    Boolean(diamond.colorFamily) && diamond.colorFamily !== 'Бесцветный (D–J)';
-  const parsedFancy = isColoredStone ? parseFancyColor(diamond.color) : null;
-  const colorSwatch = isColoredStone
+  const colorDisplay = getColoredStoneDisplayInfo(diamond);
+  const colorSwatch = colorDisplay.isColored
     ? getColorHexTint(diamond.color, diamond.colorFamily).deep
     : null;
   const stoneTitlePrefix =
@@ -58,16 +56,18 @@ export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
   return (
     <article className="group bg-white border border-[#E4E6EB] rounded-lg overflow-hidden transition-transform duration-200 ease-out hover:-translate-y-0.5 hover:shadow-[0_10px_30px_rgba(17,19,23,0.06)] flex flex-col">
       {/* Uncropped 1:1 Square Studio Photo / Inline 360° Video Stage */}
-      <div className="relative aspect-square bg-[#F8F9FB] overflow-hidden border-b border-[#F0F2F5]">
-        {mediaView === 'video' ? (
-          <DiamondTurntable360 diamond={diamond} compact />
-        ) : (
-          <StudioDiamondImage
-            diamond={diamond}
-            onClick={() => onInspect(diamond, 'photo')}
-            className="cursor-pointer transition-transform duration-300 ease-out group-hover:scale-[1.03]"
-          />
-        )}
+      <div className="relative aspect-square w-full bg-[#F8F9FB] overflow-hidden border-b border-[#F0F2F5]">
+        <div className="absolute inset-0">
+          {mediaView === 'video' ? (
+            <DiamondTurntable360 diamond={diamond} compact />
+          ) : (
+            <StudioDiamondImage
+              diamond={diamond}
+              onClick={() => onInspect(diamond, 'photo')}
+              className="cursor-pointer transition-transform duration-300 ease-out group-hover:scale-[1.03]"
+            />
+          )}
+        </div>
 
         {/* Inline Photo / Video Switcher */}
         <div className="absolute bottom-3 left-3 inline-flex items-center gap-0.5 p-0.5 rounded-md bg-white/92 backdrop-blur-sm border border-[#E4E6EB]">
@@ -149,32 +149,34 @@ export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
                 />
               )}
               <span className="truncate">
-                {diamond.isFancyColor
-                  ? diamond.fancyIntensity || diamond.colorFamily || diamond.color
-                  : diamond.color}{' '}
-                · {diamond.clarity}
+                {colorDisplay.baseColor} · {diamond.clarity}
               </span>
             </span>
           </div>
 
-          {/* Dedicated Fancy Color Shade Line (distinguishing Color vs Fancy Shade) */}
-          {diamond.isFancyColor && (
-            <div className="text-xs font-medium text-[#1B365D] leading-snug truncate">
-              {parsedFancy?.isSpecificShade ? (
-                <>
-                  {parsedFancy.canonicalColor}
-                  {parsedFancy.shortCode ? ` (${parsedFancy.shortCode})` : ''}
-                </>
-              ) : (
-                <>Цвет: {diamond.colorFamily || diamond.color}</>
-              )}
-              {diamond.overtone &&
-              diamond.overtone !== 'Чистый тон (Pure)' &&
-              !diamond.color.toLowerCase().includes(diamond.overtone.toLowerCase())
-                ? ` · ${diamond.overtone}`
-                : ''}
-            </div>
-          )}
+          {/* Dedicated Colored Stone Intensity & Shade Lines (shown only when present) */}
+          {colorDisplay.isColored &&
+            (colorDisplay.intensity || colorDisplay.shade) && (
+              <div className="space-y-0.5 text-xs leading-snug">
+                {colorDisplay.intensity && (
+                  <div className="flex items-baseline gap-1.5 min-w-0">
+                    <span className="text-[#5A606D] shrink-0">Интенсивность:</span>
+                    <span className="font-medium text-[#111317] truncate">
+                      {colorDisplay.intensity}
+                    </span>
+                  </div>
+                )}
+                {colorDisplay.shade && (
+                  <div className="flex items-baseline gap-1.5 min-w-0">
+                    <span className="text-[#5A606D] shrink-0">Оттенок:</span>
+                    <span className="font-medium text-[#1B365D] truncate">
+                      {colorDisplay.shade}
+                      {colorDisplay.overtone ? ` · ${colorDisplay.overtone}` : ''}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
 
           {/* Unboxed Gemological Metadata */}
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#5A606D]">

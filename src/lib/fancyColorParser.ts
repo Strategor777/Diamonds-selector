@@ -718,3 +718,81 @@ export function isStrictWhiteLetterGrade(raw: string | undefined): boolean {
   return false;
 }
 
+export interface ColoredStoneDisplayInfo {
+  isColored: boolean;
+  baseColor: string;
+  intensity?: string;
+  shade?: string;
+  overtone?: string;
+}
+
+/**
+ * Extracts structured display fields (base color, intensity, shade, overtone) for
+ * colored/fancy diamonds. Only populates intensity & shade when genuinely present
+ * (bare base colors like "Pink" or "Brown" will have undefined intensity & shade).
+ */
+export function getColoredStoneDisplayInfo(stone: {
+  color: string;
+  colorFamily?: string;
+  directory?: 'white' | 'fancy';
+  isFancyColor?: boolean;
+  fancyIntensity?: string;
+  fancyOvertone?: string;
+  overtone?: string;
+}): ColoredStoneDisplayInfo {
+  const isWhiteLetter = isStrictWhiteLetterGrade(stone.color);
+  const isColored =
+    !isWhiteLetter &&
+    (Boolean(stone.isFancyColor) ||
+      stone.directory === 'fancy' ||
+      (Boolean(stone.colorFamily) && stone.colorFamily !== 'Бесцветный (D–J)'));
+
+  if (!isColored) {
+    return {
+      isColored: false,
+      baseColor: stone.color,
+    };
+  }
+
+  const parsed = parseFancyColor(stone.color);
+  const baseColor = stone.colorFamily || parsed.colorFamily || stone.color;
+  const intensity = (stone.fancyIntensity || parsed.fancyIntensity || '').trim() || undefined;
+
+  const rawOvertone = (
+    stone.fancyOvertone ||
+    stone.overtone ||
+    parsed.fancyOvertone ||
+    ''
+  ).trim();
+  const overtone =
+    rawOvertone &&
+    rawOvertone.toLowerCase() !== 'чистый тон (pure)' &&
+    rawOvertone.toLowerCase() !== 'pure' &&
+    rawOvertone.toLowerCase() !== 'none'
+      ? rawOvertone
+      : undefined;
+
+  let shade: string | undefined;
+  if (parsed.isSpecificShade) {
+    shade = parsed.shortCode
+      ? `${parsed.canonicalColor} (${parsed.shortCode})`
+      : parsed.canonicalColor;
+  } else if (overtone) {
+    shade = overtone;
+  }
+
+  const extraOvertone =
+    overtone && shade && !shade.toLowerCase().includes(overtone.toLowerCase())
+      ? overtone
+      : undefined;
+
+  return {
+    isColored: true,
+    baseColor,
+    intensity,
+    shade,
+    overtone: extraOvertone,
+  };
+}
+
+

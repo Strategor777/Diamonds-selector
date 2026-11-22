@@ -506,9 +506,9 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
 
       {mode === 'external' && sanitizedVideoUrl && !externalError ? (
         <div
-          className={`relative aspect-square w-full ${
-            compact ? 'h-full' : 'max-h-[480px] mx-auto'
-          } bg-[#F8F9FB] flex items-center justify-center overflow-hidden`}
+          className={`relative w-full ${
+            compact ? 'h-full' : 'max-w-[480px] aspect-square mx-auto'
+          } bg-[#F8F9FB] overflow-hidden`}
         >
           {directVideo ? (
             <video
@@ -523,7 +523,7 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
                 setExternalError(true);
                 setMode('turntable');
               }}
-              className="w-full h-full object-contain bg-[#F8F9FB]"
+              className="absolute inset-0 w-full h-full object-contain bg-[#F8F9FB]"
             />
           ) : (
             <iframe
@@ -537,7 +537,7 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
                 setExternalError(true);
                 setMode('turntable');
               }}
-              className="w-full h-full border-0 bg-white block"
+              className="absolute inset-0 w-full h-full border-0 bg-white block"
             />
           )}
 
@@ -575,16 +575,14 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
           ) : null}
         </div>
       ) : (
-        <div className={compact ? 'relative w-full h-full' : 'relative max-h-[480px] mx-auto'}>
+        <div className={compact ? 'relative w-full h-full' : 'relative w-full max-w-[480px] aspect-square mx-auto'}>
           <canvas
             ref={canvasRef}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
-            className={`w-full ${
-              compact ? 'h-full' : 'aspect-square max-h-[480px]'
-            } cursor-grab active:cursor-grabbing block touch-none`}
+            className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing block touch-none"
           />
           <div className="absolute top-3 left-3 flex items-center gap-2 text-xs text-[#5A606D] bg-white/90 backdrop-blur-sm px-2.5 py-1 rounded border border-[#E4E6EB] pointer-events-none">
             <RotateCw className="w-3.5 h-3.5 text-[#1B365D]" />
