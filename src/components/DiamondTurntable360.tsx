@@ -16,7 +16,8 @@ function isDirectVideoFile(url: string): boolean {
     clean.endsWith('.webm') ||
     clean.endsWith('.mov') ||
     clean.endsWith('.m4v') ||
-    clean.endsWith('.ogg')
+    clean.endsWith('.ogg') ||
+    clean.includes('nivoda-inhousemedia.s3.amazonaws.com/inhouse-360-')
   );
 }
 
@@ -59,6 +60,7 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
   const [angle, setAngle] = useState(24);
   const [speed, setSpeed] = useState<0.5 | 1 | 2>(1);
   const [externalError, setExternalError] = useState(false);
+  const [iframeLoaded, setIframeLoaded] = useState(false);
   const sanitizedVideoUrl = useMemo(
     () => sanitizeMediaUrl(diamond.videoUrl),
     [diamond.videoUrl]
@@ -73,6 +75,7 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
   // Reset mode and error state when switching stones
   useEffect(() => {
     setExternalError(false);
+    setIframeLoaded(false);
     setMode(sanitizedVideoUrl ? 'external' : 'turntable');
   }, [diamond.id, sanitizedVideoUrl]);
 
@@ -504,6 +507,14 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
         </div>
       )}
 
+      {!sanitizedVideoUrl && !compact && (
+        <div className="flex items-center justify-between gap-2 px-4 py-2 bg-white border-b border-[#E4E6EB] text-xs text-[#5A606D]">
+          <span>
+            Видео поставщика отсутствует в прайсе — отображается интерактивный 360° макет по пропорциям камня
+          </span>
+        </div>
+      )}
+
       {mode === 'external' && sanitizedVideoUrl && !externalError ? (
         <div
           className={`relative w-full ${
@@ -526,29 +537,55 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
               className="absolute inset-0 w-full h-full object-contain bg-[#F8F9FB]"
             />
           ) : (
-            <iframe
-              key={sanitizedVideoUrl}
-              src={sanitizedVideoUrl}
-              title={`360 видео ${diamond.sku}`}
-              referrerPolicy="no-referrer"
-              allow="fullscreen; autoplay"
-              sandbox="allow-scripts allow-same-origin allow-popups"
-              onError={() => {
-                setExternalError(true);
-                setMode('turntable');
-              }}
-              className="absolute inset-0 w-full h-full border-0 bg-white block"
-            />
+            <>
+              {!iframeLoaded && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center bg-[#F4F5F7] text-xs text-[#5A606D]">
+                  <span>Загрузка 360° плеера поставщика...</span>
+                  <div className="flex items-center gap-2">
+                    <a
+                      href={sanitizedVideoUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-white border border-[#D5D9E0] text-[#1B365D] font-medium hover:bg-[#F7F8FA]"
+                    >
+                      Открыть видео
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => setMode('turntable')}
+                      className="px-2.5 py-1 rounded bg-white border border-[#D5D9E0] text-[#111317] font-medium hover:bg-[#F7F8FA]"
+                    >
+                      360° макет
+                    </button>
+                  </div>
+                </div>
+              )}
+              <iframe
+                key={sanitizedVideoUrl}
+                src={sanitizedVideoUrl}
+                title={`360 видео ${diamond.sku}`}
+                referrerPolicy="no-referrer"
+                allow="fullscreen; autoplay"
+                sandbox="allow-scripts allow-same-origin allow-popups"
+                onLoad={() => setIframeLoaded(true)}
+                onError={() => {
+                  setExternalError(true);
+                  setMode('turntable');
+                }}
+                className="absolute inset-0 w-full h-full border-0 bg-transparent block"
+              />
+            </>
           )}
 
           {compact ? (
-            <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
+            <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5 z-10">
               <button
                 type="button"
                 onClick={() => setMode('turntable')}
                 className="px-2 py-1 rounded bg-white/92 backdrop-blur-sm border border-[#E4E6EB] text-[11px] font-medium text-[#111317] hover:bg-white transition-colors"
               >
-                360° модель
+                360° макет
               </button>
               <a
                 href={sanitizedVideoUrl}
@@ -557,12 +594,15 @@ export const DiamondTurntable360: React.FC<DiamondTurntable360Props> = ({
                 title="Открыть внешнее видео в новой вкладке"
                 className="inline-flex items-center gap-1 px-2 py-1 rounded bg-white/92 backdrop-blur-sm border border-[#E4E6EB] text-[11px] font-medium text-[#1B365D] hover:bg-white transition-colors"
               >
+                <span>Открыть</span>
                 <ExternalLink className="w-3 h-3" />
               </a>
             </div>
           ) : !directVideo ? (
-            <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between gap-2 px-3 py-1.5 rounded bg-white/92 backdrop-blur-sm border border-[#E4E6EB] text-[11px] text-[#5A606D]">
-              <span className="truncate">Если 360° плеер поставщика не отображается, откройте ссылку отдельно</span>
+            <div className="absolute bottom-2.5 left-2.5 right-2.5 z-10 flex items-center justify-between gap-2 px-3 py-1.5 rounded bg-white/92 backdrop-blur-sm border border-[#E4E6EB] text-[11px] text-[#5A606D]">
+              <span className="truncate">
+                Если плеер поставщика блокирует встраивание, откройте ссылку или переключитесь на 360° макет
+              </span>
               <a
                 href={sanitizedVideoUrl}
                 target="_blank"

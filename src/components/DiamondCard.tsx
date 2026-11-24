@@ -14,7 +14,8 @@ import {
   formatStonePrice,
   getColorHexTint,
 } from '../data/diamonds';
-import { getColoredStoneDisplayInfo } from '../lib/fancyColorParser';
+import { isVerifiableCertNumber } from '../lib/certVerification';
+import { getColoredStoneDisplayInfo, sanitizeMediaUrl } from '../lib/fancyColorParser';
 import { Diamond } from '../types/diamond';
 import { DiamondTurntable360 } from './DiamondTurntable360';
 import { StudioDiamondImage } from './StudioDiamondImage';
@@ -52,6 +53,8 @@ export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
     diamond.stoneType && diamond.stoneType !== 'Бриллиант' && diamond.stoneType !== 'Цветной бриллиант'
       ? `${diamond.stoneType} · `
       : '';
+  const hasRealVideo = Boolean(sanitizeMediaUrl(diamond.videoUrl));
+  const hasRealCert = isVerifiableCertNumber(diamond.certNumber);
 
   return (
     <article className="group bg-white border border-[#E4E6EB] rounded-lg overflow-hidden transition-transform duration-200 ease-out hover:-translate-y-0.5 hover:shadow-[0_10px_30px_rgba(17,19,23,0.06)] flex flex-col">
@@ -92,10 +95,10 @@ export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
                 ? 'bg-[#1B365D] text-white'
                 : 'text-[#111317] hover:bg-[#F1F3F5]'
             }`}
-            aria-label={`Видео 360 для ${diamond.sku}`}
+            aria-label={hasRealVideo ? `Видео 360 для ${diamond.sku}` : `360° макет для ${diamond.sku}`}
           >
             <PlayCircle className="w-3.5 h-3.5" />
-            Видео 360°
+            {hasRealVideo ? 'Видео 360°' : '360° макет'}
           </button>
         </div>
 
@@ -154,24 +157,26 @@ export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
             </span>
           </div>
 
-          {/* Dedicated Colored Stone Intensity & Shade Lines (shown only when present) */}
+          {/* Dedicated Colored Stone Intensity & Shade Block (shown when present) */}
           {colorDisplay.isColored &&
-            (colorDisplay.intensity || colorDisplay.shade) && (
-              <div className="space-y-0.5 text-xs leading-snug">
+            (colorDisplay.intensity || colorDisplay.shade || colorDisplay.overtone) && (
+              <div className="bg-[#F8F9FB] border border-[#EAECEF] rounded-md px-2.5 py-1.5 space-y-1 text-xs leading-snug">
                 {colorDisplay.intensity && (
-                  <div className="flex items-baseline gap-1.5 min-w-0">
+                  <div className="flex items-baseline justify-between gap-2 min-w-0">
                     <span className="text-[#5A606D] shrink-0">Интенсивность:</span>
-                    <span className="font-medium text-[#111317] truncate">
+                    <span className="font-medium text-[#111317] text-right truncate">
                       {colorDisplay.intensity}
                     </span>
                   </div>
                 )}
-                {colorDisplay.shade && (
-                  <div className="flex items-baseline gap-1.5 min-w-0">
+                {(colorDisplay.shade || colorDisplay.overtone) && (
+                  <div className="flex items-baseline justify-between gap-2 min-w-0">
                     <span className="text-[#5A606D] shrink-0">Оттенок:</span>
-                    <span className="font-medium text-[#1B365D] truncate">
-                      {colorDisplay.shade}
-                      {colorDisplay.overtone ? ` · ${colorDisplay.overtone}` : ''}
+                    <span className="font-medium text-[#1B365D] text-right truncate">
+                      {colorDisplay.shade || colorDisplay.overtone}
+                      {colorDisplay.shade && colorDisplay.overtone
+                        ? ` · ${colorDisplay.overtone}`
+                        : ''}
                     </span>
                   </div>
                 )}
@@ -180,7 +185,7 @@ export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
 
           {/* Unboxed Gemological Metadata */}
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#5A606D]">
-            {diamond.isFancyColor ? (
+            {colorDisplay.isColored ? (
               <>
                 {diamond.cut && String(diamond.cut) !== 'N/A' && (
                   <>
@@ -204,14 +209,18 @@ export const DiamondCard: React.FC<DiamondCardProps> = React.memo(({
               {diamond.lengthMm.toFixed(2)}×{diamond.widthMm.toFixed(2)} мм
             </span>
             <span aria-hidden="true">·</span>
-            <button
-              type="button"
-              onClick={() => onInspect(diamond, 'cert')}
-              className="inline-flex items-center gap-1 text-[#1B365D] hover:underline font-medium"
-            >
-              {diamond.certLab} #{diamond.certNumber}
-              <ExternalLink className="w-3 h-3" />
-            </button>
+            {hasRealCert ? (
+              <button
+                type="button"
+                onClick={() => onInspect(diamond, 'cert')}
+                className="inline-flex items-center gap-1 text-[#1B365D] hover:underline font-medium"
+              >
+                {diamond.certLab} #{diamond.certNumber}
+                <ExternalLink className="w-3 h-3" />
+              </button>
+            ) : (
+              <span className="text-[#8B919E]">Без номера сертификата</span>
+            )}
           </div>
         </div>
 

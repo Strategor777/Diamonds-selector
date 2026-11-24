@@ -136,44 +136,81 @@ export const ALL_FANCY_CLARITIES: DiamondClarity[] = [
   'I2',
 ];
 
+export const STUDIO_GEM_PHOTOS = {
+  round_white: '/src/assets/images/white_colorless_round_1795326367707.jpg',
+  oval_white: '/src/assets/images/white_colorless_oval_v2_1795402137246.jpg',
+  emerald_white: '/src/assets/images/white_colorless_emerald_1795402112687.jpg',
+  princess_white: '/src/assets/images/white_colorless_princess_1795402112426.jpg',
+  cushion_white: '/src/assets/images/white_colorless_cushion_1795402111817.jpg',
+  pear_white: '/src/assets/images/white_colorless_pear_1795402112167.jpg',
+  radiant_white: '/src/assets/images/white_colorless_radiant_1795402112076.jpg',
+  marquise_white: '/src/assets/images/white_colorless_marquise_1795402112594.jpg',
+  heart_white: '/src/assets/images/white_colorless_heart_1795402112878.jpg',
+  asscher_white: '/src/assets/images/white_colorless_asscher_1795402112534.jpg',
+  baguette_white: '/src/assets/images/white_colorless_baguette_1795402966482.jpg',
+  trilliant_white: '/src/assets/images/white_colorless_trilliant_1795402965987.jpg',
+  shield_white: '/src/assets/images/white_colorless_shield_1795402966047.jpg',
+  kite_white: '/src/assets/images/white_colorless_kite_1795402965738.jpg',
+  hexagon_white: '/src/assets/images/white_colorless_hexagon_1795402964318.jpg',
+  lozenge_white: '/src/assets/images/white_colorless_lozenge_1795402965739.jpg',
+  half_moon_white: '/src/assets/images/white_colorless_half_moon_1795402966048.jpg',
+  trapezoid_white: '/src/assets/images/white_colorless_trapezoid_1795402966233.jpg',
+  cadillac_white: '/src/assets/images/white_colorless_cadillac_1795402965864.jpg',
+  briolette_white: '/src/assets/images/white_colorless_briolette_1795402965985.jpg',
+  cabochon_white: '/src/assets/images/white_colorless_cabochon_1795402965860.jpg',
+  rose_cut_white: '/src/assets/images/white_colorless_rose_cut_1795402966233.jpg',
+  round_pink: '/src/assets/images/fancy_intense_pink_round_v2_1795320017046.jpg',
+  round_yellow: '/src/assets/images/fancy_intense_yellow_round_1795326337412.jpg',
+  round_blue: '/src/assets/images/fancy_intense_blue_round_1795326338645.jpg',
+  round_green: '/src/assets/images/fancy_intense_green_round_1795326338273.jpg',
+  round_brown: '/src/assets/images/fancy_brown_cognac_round_1795326338270.jpg',
+  round_champagne: '/src/assets/images/fancy_champagne_round_1795326337470.jpg',
+  round_orange: '/src/assets/images/fancy_intense_orange_round_1795326337531.jpg',
+  round_purple: '/src/assets/images/fancy_intense_purple_round_1795326366202.jpg',
+  round_red: '/src/assets/images/fancy_red_round_1795326367457.jpg',
+  round_gray: '/src/assets/images/fancy_gray_round_1795326367271.jpg',
+  round_black: '/src/assets/images/fancy_black_round_1795326367830.jpg',
+  round_chameleon: '/src/assets/images/fancy_chameleon_round_1795326365956.jpg',
+} as const;
+
 export const SHAPE_IMAGE_MAP: Record<DiamondShape, string> = {
-  Round: '/images/diamond_round_cut_1794842114159.jpg',
-  Oval: '/images/diamond_oval_cut_1794842114463.jpg',
-  Emerald: '/images/diamond_emerald_cut_1794842114857.jpg',
-  Princess: '/images/diamond_princess_cushion_1794842114497.jpg',
-  Cushion: '/images/diamond_princess_cushion_1794842114497.jpg',
-  Pear: '/images/diamond_pear_marquise_1794842115413.jpg',
-  Radiant: '/images/diamond_emerald_cut_1794842114857.jpg',
-  Marquise: '/images/diamond_pear_marquise_1794842115413.jpg',
-  Heart: '/images/diamond_princess_cushion_1794842114497.jpg',
-  Asscher: '/images/diamond_emerald_cut_1794842114857.jpg',
-  'Old Mine': '/images/diamond_princess_cushion_1794842114497.jpg',
-  'Old European': '/images/diamond_round_cut_1794842114159.jpg',
-  'Antique Cushion': '/images/diamond_princess_cushion_1794842114497.jpg',
-  'Rose Cut': '/images/diamond_round_cut_1794842114159.jpg',
-  Moval: '/images/diamond_oval_cut_1794842114463.jpg',
-  Shield: '/images/diamond_emerald_cut_1794842114857.jpg',
-  Kite: '/images/diamond_pear_marquise_1794842115413.jpg',
-  Hexagon: '/images/diamond_emerald_cut_1794842114857.jpg',
-  Lozenge: '/images/diamond_pear_marquise_1794842115413.jpg',
-  'Half Moon': '/images/diamond_oval_cut_1794842114463.jpg',
-  Trapezoid: '/images/diamond_emerald_cut_1794842114857.jpg',
-  Cadillac: '/images/diamond_emerald_cut_1794842114857.jpg',
-  Briolette: '/images/diamond_pear_marquise_1794842115413.jpg',
-  Trilliant: '/images/diamond_round_cut_1794842114159.jpg',
-  Baguette: '/images/diamond_emerald_cut_1794842114857.jpg',
-  Octagon: '/images/diamond_emerald_cut_1794842114857.jpg',
-  Cabochon: '/images/diamond_oval_cut_1794842114463.jpg',
+  Round: STUDIO_GEM_PHOTOS.round_white,
+  Oval: STUDIO_GEM_PHOTOS.oval_white,
+  Emerald: STUDIO_GEM_PHOTOS.emerald_white,
+  Princess: STUDIO_GEM_PHOTOS.princess_white,
+  Cushion: STUDIO_GEM_PHOTOS.cushion_white,
+  Pear: STUDIO_GEM_PHOTOS.pear_white,
+  Radiant: STUDIO_GEM_PHOTOS.radiant_white,
+  Marquise: STUDIO_GEM_PHOTOS.marquise_white,
+  Heart: STUDIO_GEM_PHOTOS.heart_white,
+  Asscher: STUDIO_GEM_PHOTOS.asscher_white,
+  'Old Mine': STUDIO_GEM_PHOTOS.cushion_white,
+  'Old European': STUDIO_GEM_PHOTOS.round_white,
+  'Antique Cushion': STUDIO_GEM_PHOTOS.cushion_white,
+  'Rose Cut': STUDIO_GEM_PHOTOS.rose_cut_white,
+  Moval: STUDIO_GEM_PHOTOS.oval_white,
+  Shield: STUDIO_GEM_PHOTOS.shield_white,
+  Kite: STUDIO_GEM_PHOTOS.kite_white,
+  Hexagon: STUDIO_GEM_PHOTOS.hexagon_white,
+  Lozenge: STUDIO_GEM_PHOTOS.lozenge_white,
+  'Half Moon': STUDIO_GEM_PHOTOS.half_moon_white,
+  Trapezoid: STUDIO_GEM_PHOTOS.trapezoid_white,
+  Cadillac: STUDIO_GEM_PHOTOS.cadillac_white,
+  Briolette: STUDIO_GEM_PHOTOS.briolette_white,
+  Trilliant: STUDIO_GEM_PHOTOS.trilliant_white,
+  Baguette: STUDIO_GEM_PHOTOS.baguette_white,
+  Octagon: STUDIO_GEM_PHOTOS.asscher_white,
+  Cabochon: STUDIO_GEM_PHOTOS.cabochon_white,
 };
 
 export const HERO_IMAGE_URL = '/images/hero_diamond_atelier_1794842112919.jpg';
 
 export const FANCY_IMAGE_MAP = {
-  yellow: '/images/fancy_yellow_diamond_1794909661015.jpg',
-  pink: '/images/fancy_pink_diamond_1794909659648.jpg',
-  blue: '/images/fancy_blue_diamond_1794909660380.jpg',
-  green: '/images/fancy_green_diamond_1794909660879.jpg',
-  cognac: '/images/fancy_cognac_diamond_1794909661225.jpg',
+  yellow: STUDIO_GEM_PHOTOS.round_yellow,
+  pink: STUDIO_GEM_PHOTOS.round_pink,
+  blue: STUDIO_GEM_PHOTOS.round_blue,
+  green: STUDIO_GEM_PHOTOS.round_green,
+  cognac: STUDIO_GEM_PHOTOS.round_brown,
 } as const;
 
 export const FANCY_INTENSITIES = [
@@ -277,43 +314,60 @@ export function getFancyDiamondImage(
   colorFamily: string | undefined,
   fallbackShape: DiamondShape
 ): string {
+  const parsed = parseFancyColor(color);
+  const family = (colorFamily || parsed.colorFamily || '').toLowerCase();
   const hay = `${color} ${colorFamily || ''}`.toLowerCase();
-  if (
-    fallbackShape === 'Pear' &&
-    (hay.includes('розов') || hay.includes('pink') || hay.includes('rose'))
-  ) {
-    return FANCY_IMAGE_MAP.pink;
+
+  if (fallbackShape === 'Round' || fallbackShape === 'Old European') {
+    if (family.includes('чёрн') || family.includes('черн') || hay.includes('black')) {
+      return STUDIO_GEM_PHOTOS.round_black;
+    }
+    if (family.includes('сер') || hay.includes('gray') || hay.includes('grey')) {
+      return STUDIO_GEM_PHOTOS.round_gray;
+    }
+    if (family.includes('хамелеон') || hay.includes('chameleon')) {
+      return STUDIO_GEM_PHOTOS.round_chameleon;
+    }
+    if (family.includes('красн') || /\bred\b/.test(hay)) {
+      return STUDIO_GEM_PHOTOS.round_red;
+    }
+    if (family.includes('фиолет') || family.includes('пурпур')) {
+      return STUDIO_GEM_PHOTOS.round_purple;
+    }
+    if (family.includes('оранж')) {
+      return STUDIO_GEM_PHOTOS.round_orange;
+    }
+    if (family.includes('розов')) {
+      return STUDIO_GEM_PHOTOS.round_pink;
+    }
+    if (family.includes('син') || family.includes('голуб')) {
+      return STUDIO_GEM_PHOTOS.round_blue;
+    }
+    if (family.includes('зел')) {
+      return STUDIO_GEM_PHOTOS.round_green;
+    }
+    if (hay.includes('champagne') || hay.includes('шампан')) {
+      return STUDIO_GEM_PHOTOS.round_champagne;
+    }
+    if (family.includes('корич') || family.includes('коньяч')) {
+      return STUDIO_GEM_PHOTOS.round_brown;
+    }
+    if (family.includes('жёлт') || family.includes('желт')) {
+      return STUDIO_GEM_PHOTOS.round_yellow;
+    }
+    // Fallback text match when colorFamily is generic
+    if (hay.includes('pink') || hay.includes('rose')) return STUDIO_GEM_PHOTOS.round_pink;
+    if (hay.includes('purple') || hay.includes('violet')) return STUDIO_GEM_PHOTOS.round_purple;
+    if (/\borange\b/.test(hay)) return STUDIO_GEM_PHOTOS.round_orange;
+    if (hay.includes('blue') || hay.includes('aqua')) return STUDIO_GEM_PHOTOS.round_blue;
+    if (hay.includes('green') || hay.includes('mint')) return STUDIO_GEM_PHOTOS.round_green;
+    if (hay.includes('brown') || hay.includes('cognac')) return STUDIO_GEM_PHOTOS.round_brown;
+    if (hay.includes('yellow') || hay.includes('canary')) return STUDIO_GEM_PHOTOS.round_yellow;
+    return STUDIO_GEM_PHOTOS.round_white;
   }
-  if (
-    (fallbackShape === 'Oval' || fallbackShape === 'Moval') &&
-    (hay.includes('коньяч') ||
-      hay.includes('шампан') ||
-      hay.includes('корич') ||
-      hay.includes('brown') ||
-      hay.includes('champagne') ||
-      hay.includes('cognac'))
-  ) {
-    return FANCY_IMAGE_MAP.cognac;
-  }
-  if (
-    (fallbackShape === 'Emerald' || fallbackShape === 'Octagon') &&
-    (hay.includes('син') || hay.includes('голуб') || hay.includes('blue') || hay.includes('aqua'))
-  ) {
-    return FANCY_IMAGE_MAP.blue;
-  }
-  if (
-    fallbackShape === 'Radiant' &&
-    (hay.includes('жёлт') || hay.includes('желт') || hay.includes('yellow') || hay.includes('canary') || hay.includes('lemon'))
-  ) {
-    return FANCY_IMAGE_MAP.yellow;
-  }
-  if (
-    fallbackShape === 'Asscher' &&
-    (hay.includes('зел') || hay.includes('green') || hay.includes('mint') || hay.includes('хамелеон') || hay.includes('chameleon'))
-  ) {
-    return FANCY_IMAGE_MAP.green;
-  }
-  return SHAPE_IMAGE_MAP[fallbackShape] || SHAPE_IMAGE_MAP.Round;
+
+  // All non-Round cuts use their exact matching bright-studio shape master (calibrated in StudioDiamondImage)
+  return SHAPE_IMAGE_MAP[fallbackShape] || STUDIO_GEM_PHOTOS.round_white;
 }
 
 export function formatStonePrice(

@@ -25,6 +25,10 @@
           "type": "number",
           "description": "Total number of public catalog shard documents."
         },
+        "shardHashes": {
+          "type": "array",
+          "description": "Bounded array (max 5000) of deterministic per-shard content hashes for incremental sync."
+        },
         "supplierCount": {
           "type": "number",
           "description": "Count of active supplier feeds merged into the registry."
@@ -148,7 +152,7 @@
     },
     "PublicCatalogShard": {
       "title": "PublicCatalogShard",
-      "description": "Public storefront shard containing up to 450 client-safe diamond records (no wholesale cost prices or supplier identities).",
+      "description": "Public storefront shard containing up to 500 compact client-safe diamond records (no wholesale cost prices or supplier identities).",
       "type": "object",
       "properties": {
         "shardIndex": {
@@ -157,11 +161,17 @@
         },
         "version": {
           "type": "number",
-          "description": "Registry revision this shard belongs to."
+          "description": "Registry revision when this shard was last modified."
         },
         "count": {
           "type": "number",
           "description": "Number of items inside this shard."
+        },
+        "dataHash": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Deterministic content hash of the shard items for differential writes and reads."
         },
         "items": {
           "type": "array",
@@ -181,6 +191,7 @@
         "shardIndex",
         "version",
         "count",
+        "dataHash",
         "items",
         "updatedByUid",
         "updatedAt"
@@ -200,6 +211,12 @@
         "count": {
           "type": "number"
         },
+        "dataHash": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Deterministic content hash of the cost shard entries for differential writes."
+        },
         "entries": {
           "type": "array",
           "description": "Bounded array (max 500) of cost and supplier overlay maps."
@@ -218,6 +235,7 @@
         "shardIndex",
         "version",
         "count",
+        "dataHash",
         "entries",
         "updatedByUid",
         "updatedAt"

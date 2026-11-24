@@ -1,4 +1,5 @@
 import {
+  ALL_INITIAL_DIAMONDS,
   SHAPE_IMAGE_MAP,
   SHAPE_SHORT_RU,
   extractFancyIntensity,
@@ -12,11 +13,20 @@ import {
 } from '../types/diamond';
 import { isWhiteDiamondColorGrade } from './diamondMapper';
 import {
+  cleanOvertoneValue,
+  composeParsedFancyColor,
+  extractCertNumberFromUrl,
   isNonImageMediaUrl,
   isStrictWhiteLetterGrade,
+  normalizeStandaloneIntensity,
   parseFancyColor,
   sanitizeMediaUrl,
 } from './fancyColorParser';
+
+const BUILT_IN_DEMO_IDS = new Set<string>(ALL_INITIAL_DIAMONDS.map((d) => d.id));
+const BUILT_IN_DEMO_SKUS = new Set<string>(
+  ALL_INITIAL_DIAMONDS.map((d) => d.sku.trim().toUpperCase())
+);
 
 export interface CatalogIndex {
   searchTokens: string[];
@@ -307,10 +317,18 @@ export function filterAndSortCatalog(
       return;
     }
     if (intensitySet) {
-      const intensity = d.fancyIntensity || extractFancyIntensity(d.color);
+      const intensity =
+        normalizeStandaloneIntensity(d.fancyIntensity) ||
+        extractFancyIntensity(d.color);
       if (!intensity || !intensitySet.has(intensity)) return;
     }
-    if (colorSet && !colorSet.has(d.color)) return;
+    if (colorSet) {
+      if (!colorSet.has(d.color)) {
+        if (fancyFlags[i] !== 1) return;
+        const composed = composeParsedFancyColor(d);
+        if (!colorSet.has(composed.canonicalColor)) return;
+      }
+    }
     if (claritySet && !claritySet.has(d.clarity)) return;
     if (cutSet && !cutSet.has(d.cut)) return;
     if (polishSet && !polishSet.has(d.polish)) return;
@@ -373,6 +391,17 @@ function getDiamondUniqueKey(d: Diamond): string {
   return `ID:${d.id}`;
 }
 
+export function isBuiltInDemoStone(
+  d: Pick<Diamond, 'id' | 'sku' | 'source' | 'supplierId'>
+): boolean {
+  if (d.source === 'catalog' || d.supplierId === 'default-atelier') return true;
+  if (d.id && BUILT_IN_DEMO_IDS.has(d.id)) return true;
+  if (!d.supplierId && d.sku && BUILT_IN_DEMO_SKUS.has(d.sku.trim().toUpperCase())) {
+    return true;
+  }
+  return false;
+}
+
 export function deduplicateDiamonds(
   incoming: Diamond[],
   existing: Diamond[],
@@ -380,15 +409,18 @@ export function deduplicateDiamonds(
   supplierId?: string
 ): DeduplicationResult {
   const map = new Map<string, Diamond>();
+  const incomingHasRealStones = incoming.some((d) => !isBuiltInDemoStone(d));
 
   if (replaceMode === 'none') {
     for (let i = 0; i < existing.length; i++) {
       const d = existing[i];
+      if (incomingHasRealStones && isBuiltInDemoStone(d)) continue;
       map.set(getDiamondUniqueKey(d), d);
     }
   } else if (replaceMode === 'fancy') {
     for (let i = 0; i < existing.length; i++) {
       const d = existing[i];
+      if (incomingHasRealStones && isBuiltInDemoStone(d)) continue;
       if (!isFancyDiamond(d)) {
         map.set(getDiamondUniqueKey(d), d);
       }
@@ -396,6 +428,7 @@ export function deduplicateDiamonds(
   } else if (replaceMode === 'supplier' && supplierId) {
     for (let i = 0; i < existing.length; i++) {
       const d = existing[i];
+      if (incomingHasRealStones && isBuiltInDemoStone(d)) continue;
       if (d.supplierId !== supplierId) {
         map.set(getDiamondUniqueKey(d), d);
       }
@@ -530,11 +563,15 @@ export function getStudioFallbackImage(
  *  - Sanitized https:// imageUrl & videoUrl (and non-image viewer URLs routed to videoUrl)
  */
 export function normalizeCatalogDiamonds(catalog: Diamond[]): Diamond[] {
-  let anyChanged = false;
-  const out = new Array<Diamond>(catalog.length);
+  const hasRealStones = catalog.some((d) => !isBuiltInDemoStone(d));
+  const sourceList = hasRealStones
+    ? catalog.filter((d) => !isBuiltInDemoStone(d))
+    : catalog;
+  let anyChanged = sourceList.length !== catalog.length;
+  const out = new Array<Diamond>(sourceList.length);
 
-  for (let i = 0; i < catalog.length; i++) {
-    const d = catalog[i];
+  for (let i = 0; i < sourceList.length; i++) {
+    const d = sourceList[i];
     const trimmedColor = (d.color || '').trim();
     const isWhiteLetter = isStrictWhiteLetterGrade(trimmedColor);
 
@@ -545,25 +582,52 @@ export function normalizeCatalogDiamonds(catalog: Diamond[]): Diamond[] {
     let nextIsFancy = d.isFancyColor;
     let nextDirectory = d.directory;
 
+    const existingIntensity = normalizeStandaloneIntensity(d.fancyIntensity);
+    const existingOvertone = cleanOvertoneValue(d.fancyOvertone || d.overtone);
+    const quickParsed = !isWhiteLetter ? parseFancyColor(trimmedColor) : null;
+
     const treatsAsFancy =
       !isWhiteLetter &&
       (d.directory === 'fancy' ||
         d.isFancyColor ||
+        Boolean(existingIntensity) ||
+        Boolean(existingOvertone) ||
         (Boolean(d.colorFamily) && d.colorFamily !== 'Бесцветный (D–J)') ||
+        Boolean(quickParsed?.isSpecificShade) ||
         trimmedColor.length > 2);
 
-    if (treatsAsFancy) {
-      const parsed = parseFancyColor(trimmedColor);
+    if (treatsAsFancy && quickParsed) {
+      const parsed = composeParsedFancyColor(d);
+
       nextColor = parsed.canonicalColor;
-      nextColorFamily = parsed.colorFamily;
-      nextIntensity = parsed.fancyIntensity;
-      nextOvertone = parsed.fancyOvertone;
+      nextColorFamily =
+        parsed.colorFamily !== 'Фантазийный'
+          ? parsed.colorFamily
+          : d.colorFamily || parsed.colorFamily;
+      nextIntensity = parsed.fancyIntensity || existingIntensity;
+      nextOvertone = cleanOvertoneValue(parsed.fancyOvertone) || existingOvertone;
       nextIsFancy = true;
       nextDirectory = 'fancy';
     }
 
+    let nextCertNumber = d.certNumber;
+    let nextCertLab = d.certLab;
+    const isSyntheticCert =
+      !nextCertNumber || /^(XL|GS|MGR|DEMO|TEST|TMP)-/i.test(nextCertNumber.trim());
+    if (isSyntheticCert && d.certUrl) {
+      const extractedCert = extractCertNumberFromUrl(d.certUrl);
+      if (extractedCert) {
+        nextCertNumber = extractedCert;
+        const lowUrl = d.certUrl.toLowerCase();
+        if (lowUrl.includes('igi.org')) nextCertLab = 'IGI';
+        else if (lowUrl.includes('gia.edu')) nextCertLab = 'GIA';
+        else if (lowUrl.includes('hrdantwerp')) nextCertLab = 'HRD';
+      }
+    }
+
     let nextImageUrl = d.imageUrl;
     let nextVideoUrl = d.videoUrl ? sanitizeMediaUrl(d.videoUrl) : undefined;
+    let hasExternalImg = false;
 
     if (nextImageUrl && !nextImageUrl.startsWith('/')) {
       const sanitizedImg = sanitizeMediaUrl(nextImageUrl);
@@ -588,6 +652,7 @@ export function normalizeCatalogDiamonds(catalog: Diamond[]): Diamond[] {
         });
       } else {
         nextImageUrl = sanitizedImg;
+        hasExternalImg = true;
       }
     } else {
       nextImageUrl = getStudioFallbackImage({
@@ -599,6 +664,19 @@ export function normalizeCatalogDiamonds(catalog: Diamond[]): Diamond[] {
       });
     }
 
+    // If a supplier put a direct image file (e.g. still.jpg) in videoUrl and photo is absent,
+    // promote it to imageUrl so the card displays the real supplier photo instead of a static image in the video tab.
+    if (
+      nextVideoUrl &&
+      /\.(jpg|jpeg|png|webp|gif|avif)(\?.*)?$/i.test(nextVideoUrl)
+    ) {
+      if (!hasExternalImg) {
+        nextImageUrl = nextVideoUrl;
+        hasExternalImg = true;
+      }
+      nextVideoUrl = undefined;
+    }
+
     if (
       nextColor !== d.color ||
       nextColorFamily !== d.colorFamily ||
@@ -606,6 +684,8 @@ export function normalizeCatalogDiamonds(catalog: Diamond[]): Diamond[] {
       nextOvertone !== d.fancyOvertone ||
       nextIsFancy !== d.isFancyColor ||
       nextDirectory !== d.directory ||
+      nextCertNumber !== d.certNumber ||
+      nextCertLab !== d.certLab ||
       nextImageUrl !== d.imageUrl ||
       nextVideoUrl !== d.videoUrl
     ) {
@@ -620,6 +700,8 @@ export function normalizeCatalogDiamonds(catalog: Diamond[]): Diamond[] {
         primaryHue: nextIsFancy ? nextColorFamily : d.primaryHue,
         isFancyColor: nextIsFancy,
         directory: nextDirectory,
+        certNumber: nextCertNumber,
+        certLab: nextCertLab,
         imageUrl: nextImageUrl,
         videoUrl: nextVideoUrl,
       };
@@ -628,6 +710,6 @@ export function normalizeCatalogDiamonds(catalog: Diamond[]): Diamond[] {
     }
   }
 
-  return anyChanged ? out : catalog;
+  return anyChanged ? out : sourceList;
 }
 

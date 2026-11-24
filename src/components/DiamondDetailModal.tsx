@@ -6,7 +6,6 @@ import {
   ExternalLink,
   GitCompare,
   PlayCircle,
-  RefreshCw,
   Scale,
   Search,
   ShieldCheck,
@@ -25,13 +24,13 @@ import {
   getCalibratedStudioVisual,
   hasExternalSupplierPhoto,
   isVerifiableCertNumber,
-  verifyCertificateColor,
 } from '../lib/certVerification';
-import type { CertVerifyResponse } from '../lib/certVerifyTypes';
-import { getColoredStoneDisplayInfo } from '../lib/fancyColorParser';
+import { getColoredStoneDisplayInfo, sanitizeMediaUrl } from '../lib/fancyColorParser';
+import { buildIgiPdfUrl } from '../lib/igiReportParser';
 import { Diamond } from '../types/diamond';
 import { DiamondShapeIcon } from './DiamondShapeIcon';
 import { DiamondTurntable360 } from './DiamondTurntable360';
+import { IgiCertVerificationPanel } from './IgiCertVerificationPanel';
 import { StudioDiamondImage } from './StudioDiamondImage';
 
 interface DiamondDetailModalProps {
@@ -64,11 +63,7 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
   const [loupePos, setLoupePos] = useState({ x: 50, y: 50 });
   const [isShowingStudio, setIsShowingStudio] = useState(false);
 
-  // Automatic certificate color verification state
-  const [verifyState, setVerifyState] = useState<
-    'idle' | 'checking' | 'done'
-  >('idle');
-  const [verifyResult, setVerifyResult] = useState<CertVerifyResponse | null>(null);
+  // Local one-time certificate verification state (no external API exchange)
   const [manualColorInput, setManualColorInput] = useState('');
   const [manualApplyStudio, setManualApplyStudio] = useState(true);
   const [verifyNotice, setVerifyNotice] = useState<string | null>(null);
@@ -87,64 +82,6 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
     setManualApplyStudio(true);
   }, [diamond?.id]);
 
-  // Automatic certificate color verification when opening a stone with a real cert number
-  useEffect(() => {
-    if (!diamond) return;
-    if (!isVerifiableCertNumber(diamond.certNumber)) {
-      setVerifyState('idle');
-      setVerifyResult(null);
-      return;
-    }
-
-    const controller = new AbortController();
-    let active = true;
-    setVerifyState('checking');
-
-    verifyCertificateColor(diamond.certLab, diamond.certNumber, {
-      signal: controller.signal,
-    })
-      .then((res) => {
-        if (!active) return;
-        setVerifyResult(res);
-        setVerifyState('done');
-
-        // Auto-apply verified certificate color & calibrated studio photo if needed
-        if (
-          res.status === 'verified' &&
-          res.normalizedColor &&
-          onUpdateDiamond &&
-          (!diamond.certColorVerified ||
-            diamond.certVerifiedColor !== res.normalizedColor)
-        ) {
-          const colorChanged =
-            diamond.color.trim().toLowerCase() !==
-            res.normalizedColor.trim().toLowerCase();
-          const updated = applyVerifiedColorToDiamond(diamond, res, {
-            useStudioPhoto:
-              diamond.useStudioPhoto || !hasExternalSupplierPhoto(diamond) || colorChanged,
-            source: 'auto',
-          });
-          onUpdateDiamond(updated);
-          setVerifyNotice(
-            colorChanged
-              ? `Цвет автоматически уточнён по сертификату ${res.lab}: ${res.normalizedColor}. Подобрано студийное фото.`
-              : `Цвет ${res.normalizedColor} подтверждён на сайте ${res.lab}.`
-          );
-        }
-      })
-      .catch(() => {
-        if (!active) return;
-        setVerifyState('idle');
-      });
-
-    return () => {
-      active = false;
-      controller.abort();
-    };
-    // Trigger only when switching stone or certificate number
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [diamond?.id, diamond?.certLab, diamond?.certNumber]);
-
   useEffect(() => {
     if (!diamond) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -159,6 +96,20 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
   const pricePerCarat =
     diamond.carat > 0 ? Math.round(diamond.priceUsd / diamond.carat) : diamond.priceUsd;
   const colorDisplay = getColoredStoneDisplayInfo(diamond);
+  const hasRealCert = isVerifiableCertNumber(diamond.certNumber);
+  const isIgiCert = (diamond.certLab || '').trim().toUpperCase() === 'IGI';
+  const igiPdfUrl = hasRealCert && isIgiCert ? buildIgiPdfUrl(diamond.certNumber) : undefined;
+  const hasRealVideo = Boolean(sanitizeMediaUrl(diamond.videoUrl));
+  const provenanceLabel =
+    diamond.source === 'catalog' || diamond.supplierId === 'default-atelier'
+      ? 'Демо-образец (базовый каталог)'
+      : diamond.supplierName
+        ? `Прайс: ${diamond.supplierName}`
+        : diamond.source === 'xlsx'
+          ? 'Прайс поставщика (Excel)'
+          : diamond.source === 'sheets'
+            ? 'Прайс поставщика (Google Таблицы)'
+            : 'Добавлен вручную';
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!loupeEnabled) return;
@@ -166,31 +117,6 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
     const x = Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100));
     const y = Math.min(100, Math.max(0, ((e.clientY - rect.top) / rect.height) * 100));
     setLoupePos({ x, y });
-  };
-
-  const handleManualVerifyRefresh = async () => {
-    setVerifyState('checking');
-    setVerifyNotice(null);
-    try {
-      const res = await verifyCertificateColor(diamond.certLab, diamond.certNumber, {
-        bypassCache: true,
-      });
-      setVerifyResult(res);
-      setVerifyState('done');
-      if (res.status === 'verified' && res.normalizedColor && onUpdateDiamond) {
-        const updated = applyVerifiedColorToDiamond(diamond, res, {
-          useStudioPhoto:
-            diamond.useStudioPhoto || !hasExternalSupplierPhoto(diamond) || true,
-          source: 'auto',
-        });
-        onUpdateDiamond(updated);
-        setVerifyNotice(
-          `Цвет «${res.normalizedColor}» подтверждён по сайту ${res.lab} и сохранён.`
-        );
-      }
-    } catch {
-      setVerifyState('done');
-    }
   };
 
   const handleApplyManualCertColor = (e: React.FormEvent) => {
@@ -207,8 +133,6 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
       source: 'manual',
     });
     onUpdateDiamond(updated);
-    setVerifyResult(verified);
-    setVerifyState('done');
     setManualColorInput('');
     setVerifyNotice(
       manualApplyStudio
@@ -255,7 +179,10 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
             />
             <div className="min-w-0">
               <div className="text-[11px] sm:text-xs text-[#5A606D] font-mono truncate">
-                {diamond.sku} · {diamond.certLab} #{diamond.certNumber}
+                {diamond.sku} ·{' '}
+                {hasRealCert
+                  ? `${diamond.certLab} #${diamond.certNumber}`
+                  : 'Без номера сертификата'}
               </div>
               <h2 className="text-lg sm:text-2xl font-semibold text-[#111317] truncate">
                 {diamond.stoneType &&
@@ -306,7 +233,7 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                   }`}
                 >
                   <PlayCircle className="w-3.5 h-3.5" />
-                  Видео 360°
+                  {hasRealVideo ? 'Видео 360°' : '360° макет'}
                 </button>
                 <button
                   type="button"
@@ -411,40 +338,46 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                   <div>
                     <div className="text-xs text-[#5A606D]">Геммологический отчёт</div>
                     <h3 className="text-xl font-semibold text-[#111317] font-mono tabular-nums mt-0.5">
-                      {diamond.certLab} Report #{diamond.certNumber}
+                      {hasRealCert
+                        ? `${diamond.certLab} Report #${diamond.certNumber}`
+                        : 'Номер сертификата не указан в прайсе'}
                     </h3>
                     <div className="text-xs text-[#5A606D] mt-1">
-                      Дата выдачи:{' '}
-                      <span className="font-mono">{diamond.certDate || '—'}</span> ·
-                      Лазерная гравировка на рундисте
+                      {hasRealCert ? (
+                        <>
+                          Дата выдачи:{' '}
+                          <span className="font-mono">{diamond.certDate || '—'}</span> ·
+                          Лазерная гравировка на рундисте
+                        </>
+                      ) : (
+                        'Поставщик не передал номер бланка в файле прайса — вы можете запросить скан сертификата у менеджера'
+                      )}
                     </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {isVerifiableCertNumber(diamond.certNumber) && (
-                      <button
-                        type="button"
-                        disabled={verifyState === 'checking'}
-                        onClick={handleManualVerifyRefresh}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md border border-[#D5D9E0] bg-white text-[#111317] hover:bg-[#F7F8FA] disabled:opacity-50 transition-colors whitespace-nowrap"
+                  {hasRealCert && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {igiPdfUrl && (
+                        <a
+                          href={igiPdfUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md border border-[#D5D9E0] bg-white text-[#111317] hover:bg-[#F7F8FA] transition-colors whitespace-nowrap"
+                        >
+                          PDF бланк IGI
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                      )}
+                      <a
+                        href={diamond.certUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-md bg-[#1B365D] text-white hover:bg-[#142947] transition-colors whitespace-nowrap"
                       >
-                        <RefreshCw
-                          className={`w-3.5 h-3.5 ${
-                            verifyState === 'checking' ? 'animate-spin' : ''
-                          }`}
-                        />
-                        Проверить цвет
-                      </button>
-                    )}
-                    <a
-                      href={diamond.certUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-md bg-[#1B365D] text-white hover:bg-[#142947] transition-colors whitespace-nowrap"
-                    >
-                      Открыть на сайте {diamond.certLab}
-                      <ExternalLink className="w-3.5 h-3.5" />
-                    </a>
-                  </div>
+                        Открыть на сайте {diamond.certLab}
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    </div>
+                  )}
                 </div>
 
                 {/* Proportions Diagram + Key Metrics */}
@@ -605,6 +538,12 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                     </div>
                   </dl>
                 </div>
+
+                <IgiCertVerificationPanel
+                  diamond={diamond}
+                  onUpdateDiamond={onUpdateDiamond}
+                  onNotice={setVerifyNotice}
+                />
               </div>
             )}
           </div>
@@ -662,19 +601,30 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                     </dd>
                   </div>
                 )}
-                {colorDisplay.isColored && colorDisplay.shade && (
+                {colorDisplay.isColored && (colorDisplay.shade || colorDisplay.overtone) && (
                   <div className="border-b border-[#F1F3F5] pb-2 min-w-0">
                     <dt className="text-xs text-[#5A606D]">Оттенок</dt>
                     <dd className="font-semibold text-[#1B365D] mt-0.5 leading-snug break-words">
-                      {colorDisplay.shade}
+                      {colorDisplay.shade || colorDisplay.overtone}
                     </dd>
-                    {colorDisplay.overtone && (
+                    {colorDisplay.shade && colorDisplay.overtone && (
                       <div className="text-[11px] text-[#5A606D] mt-0.5 truncate">
                         {colorDisplay.overtone}
                       </div>
                     )}
                   </div>
                 )}
+                {colorDisplay.isColored &&
+                  !colorDisplay.intensity &&
+                  !colorDisplay.shade &&
+                  !colorDisplay.overtone && (
+                    <div className="col-span-2 border-b border-[#F1F3F5] pb-2 min-w-0">
+                      <dt className="text-xs text-[#5A606D]">Интенсивность и оттенок</dt>
+                      <dd className="text-xs text-[#5A606D] mt-0.5">
+                        Не указаны в прайсе — можно уточнить по сертификату ниже
+                      </dd>
+                    </div>
+                  )}
                 <div className="border-b border-[#F1F3F5] pb-2">
                   <dt className="text-xs text-[#5A606D]">Чистота</dt>
                   <dd className="font-mono font-semibold text-[#111317] mt-0.5">
@@ -710,43 +660,68 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                     {diamond.lwRatio.toFixed(2)}
                   </dd>
                 </div>
+                <div className="col-span-2 pt-1 border-t border-[#F1F3F5]">
+                  <dt className="text-xs text-[#5A606D]">Источник позиции</dt>
+                  <dd className="text-xs font-medium text-[#111317] mt-0.5 truncate">
+                    {provenanceLabel}
+                    {diamond.supplierFileName &&
+                    diamond.source !== 'catalog' &&
+                    diamond.supplierId !== 'default-atelier'
+                      ? ` · ${diamond.supplierFileName}`
+                      : ''}
+                  </dd>
+                </div>
               </dl>
 
-              {/* Certificate Color Verification Module */}
+              {/* Certificate Parameter & Color Verification Module */}
               <div className="p-3.5 bg-[#FAFAFA] border border-[#E4E6EB] rounded-lg space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 text-xs text-[#5A606D]">
                       <ShieldCheck
                         className={`w-3.5 h-3.5 shrink-0 ${
-                          diamond.certColorVerified
+                          diamond.certParamsVerified || diamond.certColorVerified
                             ? 'text-[#065F46]'
                             : 'text-[#1B365D]'
                         }`}
                       />
-                      <span>Верификация цвета по сертификату</span>
+                      <span>
+                        {isIgiCert
+                          ? 'Проверка параметров по IGI'
+                          : 'Верификация по сертификату'}
+                      </span>
                     </div>
                     <div className="text-sm font-mono font-semibold text-[#111317] truncate mt-0.5">
-                      {diamond.certLab} #{diamond.certNumber}
+                      {hasRealCert
+                        ? `${diamond.certLab} #${diamond.certNumber}`
+                        : 'Номер сертификата не указан в прайсе'}
                     </div>
                   </div>
-                  <a
-                    href={diamond.certUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md border border-[#D5D9E0] bg-white text-[#1B365D] hover:bg-[#F7F8FA] transition-colors whitespace-nowrap shrink-0"
-                  >
-                    Бланк
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
+                  {hasRealCert && (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {igiPdfUrl && (
+                        <a
+                          href={igiPdfUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 px-2 py-1.5 text-xs font-medium rounded-md border border-[#D5D9E0] bg-white text-[#111317] hover:bg-[#F7F8FA] transition-colors whitespace-nowrap"
+                        >
+                          PDF
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      )}
+                      <a
+                        href={diamond.certUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md border border-[#D5D9E0] bg-white text-[#1B365D] hover:bg-[#F7F8FA] transition-colors whitespace-nowrap"
+                      >
+                        Бланк
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  )}
                 </div>
-
-                {verifyState === 'checking' && (
-                  <div className="text-xs text-[#5A606D] flex items-center gap-1.5">
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#1B365D] shrink-0" />
-                    <span>Проверка цвета в реестре {diamond.certLab}...</span>
-                  </div>
-                )}
 
                 {verifyNotice && (
                   <div className="text-xs text-[#065F46] bg-[#ECFDF5] border border-[#A7F3D0] rounded-md px-2.5 py-1.5 leading-snug">
@@ -754,55 +729,72 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                   </div>
                 )}
 
-                {verifyState !== 'checking' &&
-                  diamond.certColorVerified &&
+                {(diamond.certParamsVerified || diamond.certColorVerified) &&
                   !verifyNotice && (
                     <div className="text-xs text-[#065F46] leading-snug">
-                      Цвет{' '}
-                      <span className="font-mono font-semibold">
-                        {diamond.certVerifiedColor || diamond.color}
-                      </span>{' '}
-                      подтверждён по сертификату {diamond.certLab}.
+                      {diamond.certParamsVerified &&
+                      diamond.certVerifiedFields &&
+                      diamond.certVerifiedFields.length > 1 ? (
+                        <>
+                          Подтверждены характеристики по {diamond.certLab} (
+                          {diamond.certVerifiedFields.length} полей).
+                        </>
+                      ) : (
+                        <>
+                          Цвет{' '}
+                          <span className="font-mono font-semibold">
+                            {diamond.certVerifiedColor || diamond.color}
+                          </span>{' '}
+                          подтверждён по сертификату {diamond.certLab}.
+                        </>
+                      )}
                     </div>
                   )}
 
-                {verifyState === 'done' &&
-                  verifyResult &&
-                  verifyResult.status !== 'verified' &&
-                  onUpdateDiamond && (
-                    <div className="space-y-2 pt-1 border-t border-[#E4E6EB]">
-                      <p className="text-[11px] text-[#5A606D] leading-snug">
-                        {verifyResult.message}
-                      </p>
-                      <form onSubmit={handleApplyManualCertColor} className="space-y-2">
-                        <div className="flex items-center gap-1.5">
-                          <input
-                            type="text"
-                            value={manualColorInput}
-                            onChange={(e) => setManualColorInput(e.target.value)}
-                            placeholder="Цвет из бланка: FIP, Fancy Vivid Blue, E..."
-                            className="flex-1 min-w-0 px-2.5 py-1.5 text-xs font-mono bg-white border border-[#D5D9E0] rounded-md text-[#111317] placeholder:text-[#9CA3AF] focus:outline-none focus:border-[#1B365D]"
-                          />
-                          <button
-                            type="submit"
-                            disabled={!manualColorInput.trim()}
-                            className="px-2.5 py-1.5 text-xs font-medium rounded-md bg-[#1B365D] text-white hover:bg-[#142947] disabled:opacity-40 whitespace-nowrap shrink-0"
-                          >
-                            Применить
-                          </button>
-                        </div>
-                        <label className="flex items-center gap-1.5 text-[11px] text-[#5A606D] cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={manualApplyStudio}
-                            onChange={(e) => setManualApplyStudio(e.target.checked)}
-                            className="w-3.5 h-3.5 accent-[#1B365D]"
-                          />
-                          Использовать студийное фото под этот цвет и оттенок
-                        </label>
-                      </form>
-                    </div>
-                  )}
+                {hasRealCert && (
+                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('cert')}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md bg-[#1B365D] text-white hover:bg-[#142947] transition-colors"
+                    >
+                      <Award className="w-3.5 h-3.5" />
+                      Сверить все параметры (PDF / текст)
+                    </button>
+                  </div>
+                )}
+
+                {hasRealCert && onUpdateDiamond && (
+                  <div className="space-y-2 pt-2 border-t border-[#E4E6EB]">
+                    <form onSubmit={handleApplyManualCertColor} className="space-y-2">
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          value={manualColorInput}
+                          onChange={(e) => setManualColorInput(e.target.value)}
+                          placeholder="Быстро уточнить цвет: FIP, Fancy Vivid Blue, E..."
+                          className="flex-1 min-w-0 px-2.5 py-1.5 text-xs font-mono bg-white border border-[#D5D9E0] rounded-md text-[#111317] placeholder:text-[#9CA3AF] focus:outline-none focus:border-[#1B365D]"
+                        />
+                        <button
+                          type="submit"
+                          disabled={!manualColorInput.trim()}
+                          className="px-2.5 py-1.5 text-xs font-medium rounded-md bg-[#1B365D] text-white hover:bg-[#142947] disabled:opacity-40 whitespace-nowrap shrink-0"
+                        >
+                          Применить
+                        </button>
+                      </div>
+                      <label className="flex items-center gap-1.5 text-[11px] text-[#5A606D] cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={manualApplyStudio}
+                          onChange={(e) => setManualApplyStudio(e.target.checked)}
+                          className="w-3.5 h-3.5 accent-[#1B365D]"
+                        />
+                        Использовать студийное фото под этот цвет и оттенок
+                      </label>
+                    </form>
+                  </div>
+                )}
               </div>
             </div>
 

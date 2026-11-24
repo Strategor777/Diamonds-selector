@@ -22,7 +22,7 @@ import {
   getColorHexTint,
 } from '../data/diamonds';
 import { isFancyDiamond } from '../lib/catalogEngine';
-import { parseFancyColor } from '../lib/fancyColorParser';
+import { getColoredStoneDisplayInfo } from '../lib/fancyColorParser';
 import {
   ColorCategoryFilter,
   CutGrade,
@@ -195,27 +195,26 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
       }
 
       if (fancy) {
-        const parsed = parseFancyColor(d.color);
-        const intensity = d.fancyIntensity || parsed.fancyIntensity;
-        if (intensity) {
+        const info = getColoredStoneDisplayInfo(d);
+        if (info.intensity) {
           fancyIntensityCounts.set(
-            intensity,
-            (fancyIntensityCounts.get(intensity) || 0) + 1
+            info.intensity,
+            (fancyIntensityCounts.get(info.intensity) || 0) + 1
           );
         }
         // Only include true Fancy shades (e.g. "Fancy Intense Pink" / FIP, "Pinkish Brown"),
         // NEVER bare base colors like "Pink", "Blue", "Brown", "Yellow", "Black", "Gray"
         if (
-          parsed.isSpecificShade &&
-          !WHITE_COLOR_SET.has(parsed.canonicalColor.toUpperCase())
+          info.canonicalShade &&
+          !WHITE_COLOR_SET.has(info.canonicalShade.toUpperCase())
         ) {
-          const prev = fancyShadeCounts.get(parsed.canonicalColor);
+          const prev = fancyShadeCounts.get(info.canonicalShade);
           if (prev) {
             prev.count++;
           } else {
-            fancyShadeCounts.set(parsed.canonicalColor, {
+            fancyShadeCounts.set(info.canonicalShade, {
               count: 1,
-              shortCode: parsed.shortCode,
+              shortCode: info.shortCode,
             });
           }
         }

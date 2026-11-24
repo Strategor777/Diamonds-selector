@@ -51,6 +51,7 @@ import {
 } from '../types/diamond';
 import { CertBatchVerifyModal } from './CertBatchVerifyModal';
 import type { ExcelImportMode } from './ExcelImportModal';
+import { FirestoreUsagePanel } from './FirestoreUsagePanel';
 import { NumericInput } from './NumericInput';
 import { PaginationBar } from './PaginationBar';
 import { StudioDiamondImage } from './StudioDiamondImage';
@@ -74,8 +75,11 @@ interface ManagerCabinetViewProps {
   authError?: GoogleAuthErrorInfo | null;
   canUseRedirectSignIn?: boolean;
   isSyncingCloud?: boolean;
+  isRefreshingCloud?: boolean;
   syncProgress?: RegistrySyncProgress | null;
   cloudStatusMessage?: string | null;
+  registryVersion?: number;
+  lastSyncAt?: number | null;
   onUpdatePricingConfig: (next: PricingConfig) => void;
   onApplyPricingToStones: (stoneIds: string[] | null, config: PricingConfig) => void;
   onUpdateDiamond: (updated: Diamond) => void;
@@ -87,6 +91,7 @@ interface ManagerCabinetViewProps {
   onToggleSupplierActive: (supplierId: string) => void;
   onDeleteSupplier: (supplierId: string) => void;
   onPublishToCloud: () => void;
+  onForceRefreshCloud?: () => void;
   onRequestGoogleLogin: () => void;
   onRequestGoogleRedirectLogin?: () => void;
   onOpenExcelImport: (mode?: ExcelImportMode) => void;
@@ -121,8 +126,11 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
   authError = null,
   canUseRedirectSignIn = false,
   isSyncingCloud = false,
+  isRefreshingCloud = false,
   syncProgress = null,
   cloudStatusMessage = null,
+  registryVersion = 0,
+  lastSyncAt = null,
   onUpdatePricingConfig,
   onApplyPricingToStones,
   onUpdateDiamond,
@@ -134,6 +142,7 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
   onToggleSupplierActive,
   onDeleteSupplier,
   onPublishToCloud,
+  onForceRefreshCloud,
   onRequestGoogleLogin,
   onRequestGoogleRedirectLogin,
   onOpenExcelImport,
@@ -520,7 +529,7 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                 className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-medium rounded-lg border border-[#A7F3D0] bg-[#ECFDF5] text-[#065F46] hover:bg-[#D1FAE5] transition-colors whitespace-nowrap shrink-0"
               >
                 <ShieldCheck className="w-4 h-4" />
-                Проверить цвета (Сертификаты)
+                Верификация (Сертификаты)
               </button>
               <button
                 type="button"
@@ -626,6 +635,14 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
             </button>
           </div>
         )}
+
+        {/* Firestore Operations Counter & Quota Alerts (Manager Cabinet Only) */}
+        <FirestoreUsagePanel
+          registryVersion={registryVersion}
+          lastSyncAt={lastSyncAt}
+          onForceRefreshCloud={onForceRefreshCloud}
+          isRefreshingCloud={isRefreshingCloud}
+        />
 
         {/* Unified Multi-Supplier Registry & Cloud Publishing Panel */}
         <div className="bg-white border border-[#E4E6EB] rounded-xl p-6 space-y-4">
@@ -742,10 +759,12 @@ export const ManagerCabinetView: React.FC<ManagerCabinetViewProps> = ({
                   {syncProgress.phase === 'local'
                     ? 'Сохранение локальной копии...'
                     : syncProgress.phase === 'cloud-public'
-                      ? 'Загрузка витрины в облачную базу...'
+                      ? 'Обновление изменённых блоков витрины...'
                       : syncProgress.phase === 'cloud-costs'
-                        ? 'Сохранение закрытых входных цен...'
-                        : 'Обновление метаданных реестра...'}
+                        ? 'Обновление изменённых блоков закупки...'
+                        : syncProgress.phase === 'cloud-cleanup'
+                          ? 'Удаление старых версий шардов...'
+                          : 'Обновление метаданных реестра...'}
                 </span>
                 <span className="font-mono tabular-nums text-[#1B365D] font-semibold">
                   {syncProgress.completed} / {syncProgress.total}

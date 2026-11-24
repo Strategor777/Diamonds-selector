@@ -282,7 +282,6 @@ function parseTradeAbbreviation(raw: string): ParsedFancyColor | null {
   const prefixTable: [string, string][] = [
     ['FDK', 'Fancy Dark'],
     ['FDA', 'Fancy Dark'],
-    ['FDP', 'Fancy Deep'],
     ['FDE', 'Fancy Deep'],
     ['FLI', 'Fancy Light'],
     ['FLT', 'Fancy Light'],
@@ -293,6 +292,7 @@ function parseTradeAbbreviation(raw: string): ParsedFancyColor | null {
     ['FI', 'Fancy Intense'],
     ['FL', 'Fancy Light'],
     ['FD', 'Fancy Deep'],
+    ['FDP', 'Fancy Deep'],
     ['VL', 'Light'],
     ['FT', 'Light'],
     ['LT', 'Light'],
@@ -300,92 +300,95 @@ function parseTradeAbbreviation(raw: string): ParsedFancyColor | null {
     ['L', 'Light'],
   ];
 
-  let intensity: string | undefined;
-  let rest = '';
+  // Try EVERY matching prefix (longest first) and return the first one whose
+  // remainder cleanly parses as [0..2 modifiers] + valid mainHue.
+  // This prevents e.g. "FDPK" or "FDPP" from getting trapped in the 3-letter "FDP" prefix.
+  for (const [pref, intensity] of prefixTable) {
+    if (!compact.startsWith(pref) || compact.length <= pref.length) continue;
+    const rest = compact.slice(pref.length);
 
-  for (const [pref, label] of prefixTable) {
-    if (compact.startsWith(pref) && compact.length > pref.length) {
-      const candidateRest = compact.slice(pref.length);
-      // Avoid mis-parsing single-letter L/F on plain 2-letter clarity/color tokens unless valid hue follows
-      if ((pref === 'L' || pref === 'F') && candidateRest.length === 1) {
-        if (!SINGLE_LETTER_MAIN_HUE[candidateRest]) continue;
-      }
-      // Special guard: FL alone is clarity, but here candidateRest.length >= 1
-      intensity = label;
-      rest = candidateRest;
-      break;
+    if ((pref === 'L' || pref === 'F') && rest.length === 1) {
+      if (!SINGLE_LETTER_MAIN_HUE[rest]) continue;
     }
-  }
 
-  if (!intensity || !rest) return null;
+    // Extract main hue from the END of `rest` (try 3-letter, 2-letter, then 1-letter)
+    let mainHueKey: keyof typeof HUE_DEFS | undefined;
+    let modPart = '';
 
-  // Extract main hue from the END of `rest` (try 3-letter, 2-letter, then 1-letter)
-  let mainHueKey: keyof typeof HUE_DEFS | undefined;
-  let modPart = '';
-
-  for (const len of [3, 2]) {
-    if (rest.length >= len) {
-      const tail = rest.slice(-len);
-      if (MULTI_LETTER_HUE_MAP[tail]) {
-        mainHueKey = MULTI_LETTER_HUE_MAP[tail];
-        modPart = rest.slice(0, -len);
-        break;
-      }
-    }
-  }
-
-  if (!mainHueKey) {
-    const tail1 = rest.slice(-1);
-    if (SINGLE_LETTER_MAIN_HUE[tail1]) {
-      mainHueKey = SINGLE_LETTER_MAIN_HUE[tail1];
-      modPart = rest.slice(0, -1);
-    }
-  }
-
-  if (!mainHueKey) return null;
-
-  // Decode 0..2 modifier codes from `modPart`
-  const modifiers: string[] = [];
-  if (modPart.length > 0) {
-    if (modPart.length > 3) return null; // Too noisy to be a clean trade code
-    let idx = 0;
-    while (idx < modPart.length) {
-      // Check 2-letter modifier first (BR, GR, GN, OR, PK, PR, YL, BL)
-      if (idx + 2 <= modPart.length) {
-        const two = modPart.slice(idx, idx + 2);
-        const mappedTwo = MULTI_LETTER_HUE_MAP[two];
-        if (mappedTwo) {
-          modifiers.push(HUE_DEFS[mappedTwo].modifierWord);
-          idx += 2;
-          continue;
+    for (const len of [3, 2]) {
+      if (rest.length >= len) {
+        const tail = rest.slice(-len);
+        if (MULTI_LETTER_HUE_MAP[tail]) {
+          mainHueKey = MULTI_LETTER_HUE_MAP[tail];
+          modPart = rest.slice(0, -len);
+          break;
         }
       }
-      const one = modPart[idx];
-      const decoded = decodeModifierLetter(one, mainHueKey);
-      if (!decoded) return null;
-      modifiers.push(decoded);
-      idx += 1;
     }
+
+    if (!mainHueKey) {
+      const tail1 = rest.slice(-1);
+      if (SINGLE_LETTER_MAIN_HUE[tail1]) {
+        mainHueKey = SINGLE_LETTER_MAIN_HUE[tail1];
+        modPart = rest.slice(0, -1);
+      }
+    }
+
+    if (!mainHueKey) continue;
+
+    // Decode 0..2 modifier codes from `modPart`
+    const modifiers: string[] = [];
+    let modsValid = true;
+    if (modPart.length > 0) {
+      if (modPart.length > 3) {
+        modsValid = false;
+      } else {
+        let idx = 0;
+        while (idx < modPart.length) {
+          if (idx + 2 <= modPart.length) {
+            const two = modPart.slice(idx, idx + 2);
+            const mappedTwo = MULTI_LETTER_HUE_MAP[two];
+            if (mappedTwo) {
+              modifiers.push(HUE_DEFS[mappedTwo].modifierWord);
+              idx += 2;
+              continue;
+            }
+          }
+          const one = modPart[idx];
+          const decoded = decodeModifierLetter(one, mainHueKey);
+          if (!decoded) {
+            modsValid = false;
+            break;
+          }
+          modifiers.push(decoded);
+          idx += 1;
+        }
+      }
+    }
+
+    if (!modsValid) continue;
+
+    const hueDef = HUE_DEFS[mainHueKey];
+    const uniqueMods = Array.from(new Set(modifiers)).filter(
+      (m) => m.toLowerCase() !== hueDef.modifierWord.toLowerCase()
+    );
+
+    const canonicalColor = [intensity, ...uniqueMods, hueDef.canonical].join(' ');
+    const fancyOvertone =
+      uniqueMods.length > 0 ? MODIFIER_TO_OVERTONE_RU[uniqueMods[0]] : undefined;
+
+    return {
+      canonicalColor,
+      colorFamily: hueDef.family,
+      fancyIntensity: intensity,
+      fancyOvertone,
+      isBareBaseColor: false,
+      isSpecificShade: true,
+      shortCode: buildShortCode(intensity, uniqueMods, mainHueKey),
+    };
   }
 
-  const hueDef = HUE_DEFS[mainHueKey];
-  const uniqueMods = Array.from(new Set(modifiers)).filter(
-    (m) => m.toLowerCase() !== hueDef.modifierWord.toLowerCase()
-  );
-
-  const canonicalColor = [intensity, ...uniqueMods, hueDef.canonical].join(' ');
-  const fancyOvertone =
-    uniqueMods.length > 0 ? MODIFIER_TO_OVERTONE_RU[uniqueMods[0]] : undefined;
-
-  return {
-    canonicalColor,
-    colorFamily: hueDef.family,
-    fancyIntensity: intensity,
-    fancyOvertone,
-    isBareBaseColor: false,
-    isSpecificShade: true,
-    shortCode: buildShortCode(intensity, uniqueMods, mainHueKey),
-  };
+  return null;
 }
 
 /**
@@ -393,11 +396,31 @@ function parseTradeAbbreviation(raw: string): ParsedFancyColor | null {
  * into clean space-separated words before word-level parsing.
  */
 function splitSquashedFancyWords(input: string): string {
-  let s = input
+  // Remove trailing parenthetical aliases like "(Cognac)" or "(FIP)" so they don't hijack the primary GIA hue
+  const withoutParens = input.replace(/\([^)]*\)/g, ' ').trim();
+  const baseText = withoutParens || input;
+
+  let s = baseText
     .replace(/[_/,-]+/g, ' ')
     .replace(/\./g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+
+  // Expand trade intensity prefixes before full words (e.g. "FI Pink", "FV Blue", "F Int Pink", "Fcy Vivid Yellow")
+  s = s
+    .replace(/^(?:f\s*d\s*k|fdk|f\s*dark|fcy\s*dark)\b/i, 'Fancy Dark')
+    .replace(/^(?:f\s*d\s*p|fdp|f\s*deep|fcy\s*deep)\b/i, 'Fancy Deep')
+    .replace(/^(?:f\s*v\s*i\s*v|f\s*viv|f\s*vivid|fcy\s*vivid|f\s*v|fv)\b/i, 'Fancy Vivid')
+    .replace(/^(?:f\s*i\s*n\s*t|f\s*int|f\s*intense|fcy\s*intense|f\s*i|fi)\b/i, 'Fancy Intense')
+    .replace(/^(?:f\s*l\s*t|f\s*light|fcy\s*light|f\s*l|fl)\b/i, 'Fancy Light')
+    .replace(/^(?:f\s*d|fd)\b/i, 'Fancy Deep')
+    .replace(/^(?:v\s*l\s*t|v\s*light|v\s*l|vl)\b/i, 'Light')
+    .replace(/^(?:fcy|f)\s+(?=[a-zа-яё]{3,})/i, 'Fancy ')
+    .replace(/^int\b/i, 'Fancy Intense')
+    .replace(/^viv\b/i, 'Fancy Vivid')
+    .replace(/^lt\b/i, 'Light')
+    .replace(/^dk\b/i, 'Fancy Dark')
+    .replace(/^dp\b/i, 'Fancy Deep');
 
   // Insert spaces around known glued intensity/modifier/hue tokens
   const boundaryWords = [
@@ -647,17 +670,30 @@ export function isNonImageMediaUrl(url: string | undefined): boolean {
     return false;
   }
 
-  // Known non-image extensions & 360° viewer pages / cert pages
+  // Known non-image extensions & 360° viewer pages / cert pages / cloud share pages
   if (
     /\.(html?|aspx?|php|jsp|mp4|webm|mov|m4v|ogg|pdf)$/i.test(withoutQuery) ||
     low.includes('vision360') ||
     low.includes('v360.in') ||
     low.includes('loupe360') ||
+    low.includes('diacam360') ||
     low.includes('sarine') ||
+    low.includes('vdbapp') ||
+    low.includes('360view') ||
+    low.includes('view360') ||
+    low.includes('diamondview') ||
     low.includes('gia.edu/report') ||
     low.includes('igi.org/verify') ||
+    low.includes('hrdantwerp.com') ||
+    low.includes('drive.google.com') ||
+    low.includes('dropbox.com') ||
+    low.includes('onedrive.live.com') ||
+    low.includes('sharepoint.com') ||
     low.includes('video') ||
-    low.includes('/360/')
+    low.includes('/360/') ||
+    low.includes('/viewer') ||
+    low.includes('/player') ||
+    low.includes('/embed')
   ) {
     return true;
   }
@@ -667,7 +703,8 @@ export function isNonImageMediaUrl(url: string | undefined): boolean {
 
 /**
  * Sanitizes an external media URL: trims quotes/whitespace, upgrades http:// to https://
- * to prevent browser mixed-content blocking, and encodes stray spaces.
+ * to prevent browser mixed-content blocking, encodes stray spaces, and rejects malformed
+ * hostnames (e.g. broken supplier Excel links like "https://dna..com/37519").
  */
 export function sanitizeMediaUrl(val: string | undefined): string | undefined {
   if (!val) return undefined;
@@ -688,7 +725,76 @@ export function sanitizeMediaUrl(val: string | undefined): string | undefined {
     return undefined;
   }
 
-  return t.replace(/\s+/g, '%20');
+  const encoded = t.replace(/\s+/g, '%20');
+
+  if (encoded.startsWith('/')) {
+    return encoded;
+  }
+
+  try {
+    const parsed = new URL(encoded);
+    const host = parsed.hostname;
+    if (
+      !host ||
+      host.includes('..') ||
+      host.startsWith('.') ||
+      host.endsWith('.') ||
+      !host.includes('.')
+    ) {
+      return undefined;
+    }
+    return encoded;
+  } catch {
+    return undefined;
+  }
+}
+
+const SYNTHETIC_CERT_URL_RE = /^(XL|GS|MGR|DEMO|TEST|TMP)-/i;
+
+/**
+ * Extracts a real gemological report number (e.g. GIA 2536147643, IGI LG848647453 / 826699813)
+ * from a laboratory verification or PDF URL when the spreadsheet's certNumber column was empty.
+ */
+export function extractCertNumberFromUrl(certUrl: string | undefined): string | undefined {
+  const sanitized = sanitizeMediaUrl(certUrl);
+  if (!sanitized || !sanitized.startsWith('https://')) return undefined;
+
+  try {
+    const parsed = new URL(sanitized);
+    const paramNames = [
+      'r',
+      'reportno',
+      'reportNo',
+      'report_no',
+      'report',
+      'certno',
+      'cert_no',
+      'cert',
+      'certificate',
+      'number',
+    ];
+    for (const key of paramNames) {
+      const val = parsed.searchParams.get(key)?.trim();
+      if (
+        val &&
+        /^[A-Za-z0-9-]{5,28}$/.test(val) &&
+        /\d{5,}/.test(val) &&
+        !SYNTHETIC_CERT_URL_RE.test(val)
+      ) {
+        return val;
+      }
+    }
+
+    // Fallback: report number in PDF filename (e.g. /LG848647453.pdf or /2536147643.pdf)
+    const pdfMatch = parsed.pathname.match(/\/([A-Za-z]{0,4}\d{6,14})\.pdf$/i);
+    if (pdfMatch && !SYNTHETIC_CERT_URL_RE.test(pdfMatch[1])) {
+      return pdfMatch[1];
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
 }
 
 /**
@@ -724,14 +830,93 @@ export interface ColoredStoneDisplayInfo {
   intensity?: string;
   shade?: string;
   overtone?: string;
+  canonicalShade?: string;
+  shortCode?: string;
+}
+
+const RU_OVERTONE_TO_MODIFIER: Record<string, string> = {
+  'оранжевый подтон': 'Orangy',
+  'пурпурный подтон': 'Purplish',
+  'зеленоватый подтон': 'Greenish',
+  'коричневый подтон': 'Brownish',
+  'серый подтон': 'Grayish',
+  'желтоватый подтон': 'Yellowish',
+  'розоватый подтон': 'Pinkish',
+  'голубоватый подтон': 'Bluish',
+  'красноватый подтон': 'Reddish',
+  'фиолетовый подтон': 'Violetish',
+};
+
+const NON_VALUE_TOKENS = new Set([
+  '',
+  '-',
+  '—',
+  '–',
+  'none',
+  'n/a',
+  'na',
+  'null',
+  'pure',
+  'чистый тон (pure)',
+  'нет',
+  'без оттенка',
+  'без подтона',
+]);
+
+export function cleanOvertoneValue(raw: string | undefined): string | undefined {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return undefined;
+  if (NON_VALUE_TOKENS.has(trimmed.toLowerCase())) {
+    return undefined;
+  }
+  return trimmed;
 }
 
 /**
- * Extracts structured display fields (base color, intensity, shade, overtone) for
- * colored/fancy diamonds. Only populates intensity & shade when genuinely present
- * (bare base colors like "Pink" or "Brown" will have undefined intensity & shade).
+ * Normalizes a standalone Fancy Color Intensity cell (from Excel / RapNet / Manager Cabinet),
+ * handling full labels ("Fancy Intense"), short words ("Intense", "Vivid"), and trade codes ("FI", "FV", "F").
  */
-export function getColoredStoneDisplayInfo(stone: {
+export function normalizeStandaloneIntensity(raw: string | undefined): string | undefined {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return undefined;
+  const low = trimmed.toLowerCase().replace(/[._-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (NON_VALUE_TOKENS.has(low)) return undefined;
+
+  if (/^(fv|f v|fcy vivid|fancy vivid|vivid|viv|вивид|ярко фантаз.*)$/i.test(low)) {
+    return 'Fancy Vivid';
+  }
+  if (/^(fi|f i|fcy intense|fancy intense|intense|int|интенсив.*)$/i.test(low)) {
+    return 'Fancy Intense';
+  }
+  if (/^(fd|f d|fcy deep|fancy deep|deep|dp|глубок.*)$/i.test(low)) {
+    return 'Fancy Deep';
+  }
+  if (/^(fdk|f dk|fdark|fcy dark|fancy dark|dark|dk|тёмн.*|темн.*)$/i.test(low)) {
+    return 'Fancy Dark';
+  }
+  if (/^(fl|f l|flgt|fcy light|fcy lt|fancy light|светло фантаз.*)$/i.test(low)) {
+    return 'Fancy Light';
+  }
+  if (/^(vl|v l|vlt|very light|faint|light|lt|светл.*)$/i.test(low)) {
+    return 'Light';
+  }
+  if (/^(f|fcy|fancy|фантаз.*)$/i.test(low)) {
+    return 'Fancy';
+  }
+
+  // Fallback: check substring keywords inside a compound label
+  if (/\bvivid\b|вивид/i.test(low)) return 'Fancy Vivid';
+  if (/\bintense\b|интенсив/i.test(low)) return 'Fancy Intense';
+  if (/\bdeep\b|глубок/i.test(low)) return 'Fancy Deep';
+  if (/\bdark\b|тёмн|темн/i.test(low)) return 'Fancy Dark';
+  if (/\bfancy\s+light\b/i.test(low)) return 'Fancy Light';
+  if (/\bvery\s+light\b|\bfaint\b|\blight\b|светл/i.test(low)) return 'Light';
+  if (/\bfancy\b|фантаз/i.test(low)) return 'Fancy';
+
+  return undefined;
+}
+
+export interface FancyStoneInput {
   color: string;
   colorFamily?: string;
   directory?: 'white' | 'fancy';
@@ -739,13 +924,81 @@ export function getColoredStoneDisplayInfo(stone: {
   fancyIntensity?: string;
   fancyOvertone?: string;
   overtone?: string;
-}): ColoredStoneDisplayInfo {
-  const isWhiteLetter = isStrictWhiteLetterGrade(stone.color);
+  certVerifiedColor?: string;
+}
+
+/**
+ * Single source of truth for parsing a colored diamond combining `color`, `fancyIntensity`,
+ * `fancyOvertone`/`overtone`, and (when `color` is bare) `certVerifiedColor`.
+ */
+export function composeParsedFancyColor(stone: FancyStoneInput): ParsedFancyColor {
+  const trimmedColor = (stone.color || '').trim();
+  const storedIntensity = normalizeStandaloneIntensity(stone.fancyIntensity);
+  const storedOvertone = cleanOvertoneValue(stone.fancyOvertone || stone.overtone);
+
+  let parsed = parseFancyColor(trimmedColor);
+
+  // If primary color is bare but a verified certificate color carries more detail, prefer it
+  if (parsed.isBareBaseColor && stone.certVerifiedColor) {
+    const certParsed = parseFancyColor(stone.certVerifiedColor);
+    if (!certParsed.isBareBaseColor) {
+      parsed = certParsed;
+    }
+  }
+
+  const missingIntensity = !parsed.fancyIntensity && Boolean(storedIntensity);
+  const missingOvertone = !parsed.fancyOvertone && Boolean(storedOvertone);
+
+  if (missingIntensity || missingOvertone) {
+    const effectiveIntensity = parsed.fancyIntensity || storedIntensity;
+    const modWord = storedOvertone
+      ? RU_OVERTONE_TO_MODIFIER[storedOvertone.toLowerCase()] || storedOvertone
+      : undefined;
+
+    // Strip any existing intensity prefix from canonicalColor before recomposing cleanly
+    let baseTail = parsed.canonicalColor;
+    if (parsed.fancyIntensity && baseTail.startsWith(parsed.fancyIntensity)) {
+      baseTail = baseTail.slice(parsed.fancyIntensity.length).trim();
+    }
+    const alreadyHasMod =
+      modWord && baseTail.toLowerCase().includes(modWord.toLowerCase());
+
+    const composed = [
+      effectiveIntensity,
+      alreadyHasMod ? undefined : modWord,
+      baseTail,
+    ]
+      .filter(Boolean)
+      .join(' ');
+
+    const reparsed = parseFancyColor(composed);
+    if (!reparsed.isBareBaseColor || reparsed.fancyIntensity || reparsed.fancyOvertone) {
+      parsed = reparsed;
+    }
+  }
+
+  return parsed;
+}
+
+/**
+ * Extracts structured display fields (base color, intensity, shade, overtone) for
+ * colored/fancy diamonds. Combines `color`, `fancyIntensity`, and `fancyOvertone`/`overtone`
+ * so separately stored intensity/overtone fields are always reflected in both Intensity and Shade.
+ */
+export function getColoredStoneDisplayInfo(stone: FancyStoneInput): ColoredStoneDisplayInfo {
+  const trimmedColor = (stone.color || '').trim();
+  const isWhiteLetter = isStrictWhiteLetterGrade(trimmedColor);
+  const storedIntensity = normalizeStandaloneIntensity(stone.fancyIntensity);
+  const storedOvertone = cleanOvertoneValue(stone.fancyOvertone || stone.overtone);
+
   const isColored =
     !isWhiteLetter &&
     (Boolean(stone.isFancyColor) ||
       stone.directory === 'fancy' ||
-      (Boolean(stone.colorFamily) && stone.colorFamily !== 'Бесцветный (D–J)'));
+      Boolean(storedIntensity) ||
+      Boolean(storedOvertone) ||
+      (Boolean(stone.colorFamily) && stone.colorFamily !== 'Бесцветный (D–J)') ||
+      trimmedColor.length > 2);
 
   if (!isColored) {
     return {
@@ -754,23 +1007,14 @@ export function getColoredStoneDisplayInfo(stone: {
     };
   }
 
-  const parsed = parseFancyColor(stone.color);
-  const baseColor = stone.colorFamily || parsed.colorFamily || stone.color;
-  const intensity = (stone.fancyIntensity || parsed.fancyIntensity || '').trim() || undefined;
+  const parsed = composeParsedFancyColor(stone);
 
-  const rawOvertone = (
-    stone.fancyOvertone ||
-    stone.overtone ||
-    parsed.fancyOvertone ||
-    ''
-  ).trim();
-  const overtone =
-    rawOvertone &&
-    rawOvertone.toLowerCase() !== 'чистый тон (pure)' &&
-    rawOvertone.toLowerCase() !== 'pure' &&
-    rawOvertone.toLowerCase() !== 'none'
-      ? rawOvertone
-      : undefined;
+  const baseColor =
+    (stone.colorFamily && stone.colorFamily !== 'Бесцветный (D–J)'
+      ? stone.colorFamily
+      : parsed.colorFamily) || stone.color;
+  const intensity = parsed.fancyIntensity || storedIntensity || undefined;
+  const overtone = cleanOvertoneValue(parsed.fancyOvertone) || storedOvertone;
 
   let shade: string | undefined;
   if (parsed.isSpecificShade) {
@@ -792,7 +1036,10 @@ export function getColoredStoneDisplayInfo(stone: {
     intensity,
     shade,
     overtone: extraOvertone,
+    canonicalShade: parsed.isSpecificShade ? parsed.canonicalColor : undefined,
+    shortCode: parsed.shortCode,
   };
 }
+
 
 

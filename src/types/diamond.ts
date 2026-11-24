@@ -116,8 +116,10 @@ export interface Diamond {
   colorDistribution?: string;
   certColorVerified?: boolean;
   certVerifiedColor?: string;
+  certParamsVerified?: boolean;
+  certVerifiedFields?: string[];
   certVerifiedAt?: string;
-  certVerifySource?: 'auto' | 'manual';
+  certVerifySource?: 'auto' | 'manual' | 'pdf' | 'text';
   useStudioPhoto?: boolean;
 }
 

@@ -32,11 +32,14 @@ import {
 } from './lib/catalogEngine';
 import {
   RegistrySyncProgress,
+  fetchPublicClientCatalog,
+  getLastSyncAt,
   loadCloudRegistry,
   loadLocalRegistry,
   publishCloudRegistry,
   saveCloudOrder,
   saveLocalRegistry,
+  setLastSyncAt,
 } from './lib/catalogPersistence';
 import { isVerifiedAdminEmail } from './lib/firebase';
 import {
@@ -281,10 +284,14 @@ export default function App() {
     DEFAULT_PRICING_CONFIG
   );
 
-  // Persistent Registry & Cloud Sync state
+  // Persistent Registry & Cloud Sync state (with TTL timestamp & shard hashes)
   const isHydratedRef = useRef(false);
+  const publicShardHashesRef = useRef<Record<string, string>>({});
+  const loadedAdminVersionRef = useRef<number>(-1);
   const [registryVersion, setRegistryVersion] = useState(0);
+  const [lastSyncAt, setLastSyncAtState] = useState<number | null>(() => getLastSyncAt());
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
+  const [isRefreshingCloud, setIsRefreshingCloud] = useState(false);
   const [syncProgress, setSyncProgress] = useState<RegistrySyncProgress | null>(null);
   const [cloudStatusMessage, setCloudStatusMessage] = useState<string | null>(null);
 
@@ -431,18 +438,27 @@ export default function App() {
     };
   }, []);
 
-  // Hydrate persistent catalog from IndexedDB immediately on startup, then check cloud registry
+  // Hydrate persistent catalog from IndexedDB immediately on startup, then check lightweight public client endpoint with TTL + cachedVersion
   useEffect(() => {
     let active = true;
 
     const hydrate = async () => {
       let localVersion = 0;
+      let normalizedLocal: Diamond[] = [];
       const localSnap = await loadLocalRegistry();
       if (!active) return;
 
+      const storedSyncAt = getLastSyncAt() ?? localSnap?.lastSyncAt ?? null;
+      if (storedSyncAt) {
+        setLastSyncAtState(storedSyncAt);
+      }
+
       if (localSnap && (localSnap.catalog.length > 0 || localSnap.clearedExplicitly)) {
         localVersion = localSnap.version || 0;
-        const normalizedLocal = normalizeCatalogDiamonds(localSnap.catalog);
+        if (localSnap.publicShardHashes) {
+          publicShardHashesRef.current = localSnap.publicShardHashes;
+        }
+        normalizedLocal = normalizeCatalogDiamonds(localSnap.catalog);
         const hydratedSuppliers =
           localSnap.suppliers && localSnap.suppliers.length > 0
             ? rebuildSupplierFeeds(normalizedLocal, localSnap.suppliers)
@@ -468,16 +484,30 @@ export default function App() {
       isHydratedRef.current = true;
 
       try {
-        const cloudSnap = await loadCloudRegistry({
-          includeManagerData: false,
+        const cloudSnap = await fetchPublicClientCatalog({
           cachedVersion: localVersion,
+          cachedCatalog: normalizedLocal,
+          cachedShardHashes: publicShardHashesRef.current,
+          lastSyncAt: storedSyncAt,
         });
         if (!active || !cloudSnap) return;
+
+        if (!cloudSnap.skippedByTtl && !cloudSnap.offline && !cloudSnap.quotaExceeded) {
+          const nowTs = Date.now();
+          setLastSyncAt(nowTs);
+          setLastSyncAtState(nowTs);
+        }
 
         if (cloudSnap.quotaExceeded) {
           setCloudStatusMessage(
             'Достигнут дневной бесплатный лимит чтений Firestore. Каталог работает из локальной базы браузера; облачная синхронизация возобновится после сброса квоты завтра или расширения тарифа.'
           );
+          return;
+        }
+        if (cloudSnap.offline || cloudSnap.upToDate) {
+          if (cloudSnap.shardHashes) {
+            publicShardHashesRef.current = cloudSnap.shardHashes;
+          }
           return;
         }
 
@@ -487,6 +517,9 @@ export default function App() {
             normalizedCloud,
             localSnap?.suppliers || []
           );
+          if (cloudSnap.shardHashes) {
+            publicShardHashesRef.current = cloudSnap.shardHashes;
+          }
           setCatalog(normalizedCloud);
           setSuppliers(nextSuppliers);
           setRegistryVersion(cloudSnap.version);
@@ -500,12 +533,17 @@ export default function App() {
               maxPrice: Math.max(prev.maxPrice, bounds.maxPrice),
             }));
           }
+          const syncedAt = Date.now();
+          setLastSyncAt(syncedAt);
+          setLastSyncAtState(syncedAt);
           void saveLocalRegistry({
             version: cloudSnap.version,
             catalog: normalizedCloud,
             suppliers: nextSuppliers,
             pricingConfig: localSnap?.pricingConfig || DEFAULT_PRICING_CONFIG,
             savedAt: new Date().toISOString(),
+            lastSyncAt: syncedAt,
+            publicShardHashes: publicShardHashesRef.current,
             clearedExplicitly: normalizedCloud.length === 0,
           });
         }
@@ -520,15 +558,20 @@ export default function App() {
     };
   }, []);
 
-  // When verified admin unlocks Manager Cabinet, hydrate private wholesale cost shards from cloud if newer
+  // Load private wholesale costs & supplier feeds ONLY when verified admin explicitly opens Manager Cabinet
   useEffect(() => {
-    if (!isAdminSignedIn || !isManagerUnlocked) return;
+    if (activeSection !== 'manager' || !isAdminSignedIn || !isManagerUnlocked) return;
+    if (loadedAdminVersionRef.current === registryVersion && registryVersion > 0) return;
     let active = true;
 
     const loadAdminOverlay = async () => {
       try {
         const cloudAdmin = await loadCloudRegistry({
           includeManagerData: true,
+          cachedVersion: registryVersion,
+          cachedCatalog: catalog,
+          cachedShardHashes: publicShardHashesRef.current,
+          force: true,
         });
         if (!active || !cloudAdmin) return;
 
@@ -538,8 +581,18 @@ export default function App() {
           );
           return;
         }
+        if (cloudAdmin.offline) {
+          return;
+        }
 
-        if (cloudAdmin.version > registryVersion) {
+        const syncedAt = Date.now();
+        setLastSyncAt(syncedAt);
+        setLastSyncAtState(syncedAt);
+        if (cloudAdmin.shardHashes) {
+          publicShardHashesRef.current = cloudAdmin.shardHashes;
+        }
+
+        if (cloudAdmin.version >= registryVersion && cloudAdmin.catalog.length > 0) {
           const normalizedAdmin = normalizeCatalogDiamonds(cloudAdmin.catalog);
           const nextSup =
             cloudAdmin.suppliers && cloudAdmin.suppliers.length > 0
@@ -551,6 +604,9 @@ export default function App() {
             setPricingConfig(cloudAdmin.pricingConfig);
           }
           setRegistryVersion(cloudAdmin.version);
+          loadedAdminVersionRef.current = cloudAdmin.version;
+        } else {
+          loadedAdminVersionRef.current = Math.max(registryVersion, cloudAdmin.version);
         }
       } catch (err) {
         console.warn('Admin cloud overlay load skipped:', err);
@@ -561,7 +617,9 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [isAdminSignedIn, isManagerUnlocked]);
+    // Trigger strictly when Manager Cabinet is opened & unlocked by verified admin
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSection, isAdminSignedIn, isManagerUnlocked]);
 
   // Auto-persist every catalog/supplier/pricing mutation to IndexedDB so reloads never reset data
   useEffect(() => {
@@ -573,11 +631,13 @@ export default function App() {
         suppliers,
         pricingConfig,
         savedAt: new Date().toISOString(),
+        lastSyncAt: lastSyncAt ?? undefined,
+        publicShardHashes: publicShardHashesRef.current,
         clearedExplicitly: catalog.length === 0,
       });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [catalog, suppliers, pricingConfig, registryVersion]);
+  }, [catalog, suppliers, pricingConfig, registryVersion, lastSyncAt]);
 
   // Synchronous invocation inside button click preserves Chrome popup user-gesture activation
   const handleGoogleCloudLogin = () => {
@@ -806,6 +866,15 @@ export default function App() {
         onProgress: setSyncProgress,
       });
       setRegistryVersion(res.version);
+      if (res.shardHashes) {
+        publicShardHashesRef.current = res.shardHashes;
+      }
+      if (res.cloudSynced) {
+        loadedAdminVersionRef.current = res.version;
+        const syncedAt = Date.now();
+        setLastSyncAt(syncedAt);
+        setLastSyncAtState(syncedAt);
+      }
       setCloudStatusMessage(res.message);
     } catch (err: any) {
       setCloudStatusMessage(
@@ -815,6 +884,70 @@ export default function App() {
     } finally {
       setIsSyncingCloud(false);
       setSyncProgress(null);
+    }
+  };
+
+  const handleForceRefreshCloud = async () => {
+    if (isRefreshingCloud) return;
+    setIsRefreshingCloud(true);
+    setCloudStatusMessage(null);
+    try {
+      const cloudSnap = await loadCloudRegistry({
+        includeManagerData: isAdminSignedIn && isManagerUnlocked,
+        cachedVersion: registryVersion,
+        cachedCatalog: catalog,
+        cachedShardHashes: publicShardHashesRef.current,
+        force: true,
+      });
+      if (!cloudSnap) {
+        setCloudStatusMessage('В облачной базе пока нет опубликованного каталога.');
+        return;
+      }
+      if (cloudSnap.quotaExceeded) {
+        setCloudStatusMessage(
+          'Достигнут дневной лимит чтений Firestore. Каталог работает из локальной базы.'
+        );
+        return;
+      }
+      if (cloudSnap.offline) {
+        setCloudStatusMessage('Нет связи с облачной базой. Повторите позже.');
+        return;
+      }
+      const syncedAt = Date.now();
+      setLastSyncAt(syncedAt);
+      setLastSyncAtState(syncedAt);
+      if (cloudSnap.shardHashes) {
+        publicShardHashesRef.current = cloudSnap.shardHashes;
+      }
+      if (cloudSnap.upToDate) {
+        setCloudStatusMessage(
+          `Локальная версия v${registryVersion} полностью актуальна — загрузка шардов не потребовалась.`
+        );
+        return;
+      }
+      if (cloudSnap.catalog.length > 0) {
+        const normalized = normalizeCatalogDiamonds(cloudSnap.catalog);
+        const nextSup =
+          cloudSnap.suppliers && cloudSnap.suppliers.length > 0
+            ? rebuildSupplierFeeds(normalized, cloudSnap.suppliers)
+            : rebuildSupplierFeeds(normalized, suppliers);
+        setCatalog(normalized);
+        setSuppliers(nextSup);
+        if (cloudSnap.pricingConfig) {
+          setPricingConfig(cloudSnap.pricingConfig);
+        }
+        setRegistryVersion(cloudSnap.version);
+        loadedAdminVersionRef.current = cloudSnap.version;
+        setCloudStatusMessage(
+          `Синхронизировано с облаком: версия v${cloudSnap.version} (${normalized.length.toLocaleString('ru-RU')} камней).`
+        );
+      }
+    } catch (err: any) {
+      setCloudStatusMessage(
+        err?.message || 'Не удалось проверить обновления в облачной базе.'
+      );
+    } finally {
+      setIsRefreshingCloud(false);
     }
   };
 
@@ -1330,19 +1463,19 @@ export default function App() {
           <>
             {/* Editorial Storefront Hero Split */}
             <section className="bg-white border-b border-[#E4E6EB]">
-              <div className="max-w-7xl mx-auto px-6 py-10 lg:py-14">
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
-                  <div className="lg:col-span-6 flex flex-col justify-center space-y-6 py-2">
+              <div className="max-w-7xl mx-auto px-6 py-8 md:py-10 lg:py-14">
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-6 lg:gap-8 items-stretch">
+                  <div className="md:col-span-6 flex flex-col justify-center space-y-5 py-1">
                     <div className="text-xs font-medium text-[#5A606D] tracking-wide">
                       Сертифицированные природные бриллианты · GIA, IGI, HRD
                     </div>
                     <h1
-                      className="text-4xl sm:text-5xl font-semibold text-[#111317] leading-[1.08] tracking-tight"
+                      className="text-3xl sm:text-4xl lg:text-5xl font-semibold text-[#111317] leading-[1.08] tracking-tight"
                       style={{ textWrap: 'balance' }}
                     >
                       Селектор сертифицированных бриллиантов
                     </h1>
-                    <p className="text-base text-[#5A606D] leading-relaxed max-w-xl">
+                    <p className="text-sm sm:text-base text-[#5A606D] leading-relaxed max-w-xl">
                       Точный отбор по огранке, цвету, чистоте и каратности с обзором
                       360°, прямыми ссылками на реестры лабораторий и подбором пар.
                     </p>
@@ -1364,15 +1497,18 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="lg:col-span-6">
-                    <div className="h-full min-h-[260px] lg:min-h-[340px] rounded-xl overflow-hidden border border-[#E4E6EB] bg-[#F1F3F5]">
+                  <div className="md:col-span-6">
+                    <div className="w-full h-full aspect-[16/10] md:aspect-auto md:min-h-[290px] lg:min-h-[340px] rounded-xl overflow-hidden border border-[#E4E6EB] bg-[#F1F3F5]">
                       {!heroImgError ? (
                         <img
                           src={HERO_IMAGE_URL}
                           alt="Макросъёмка сертифицированного бриллианта на платине и известняке"
+                          loading="eager"
+                          fetchPriority="high"
+                          decoding="async"
                           referrerPolicy="no-referrer"
                           onError={() => setHeroImgError(true)}
-                          className="w-full h-full object-cover"
+                          className="w-full h-full object-cover object-[64%_58%] block"
                         />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center text-sm text-[#5A606D]">
@@ -1384,7 +1520,7 @@ export default function App() {
                 </div>
 
                 {/* 4-Column Summary Strip below Hero Split */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 pt-8 mt-8 border-t border-[#E4E6EB] text-sm">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-6 pt-8 mt-8 border-t border-[#E4E6EB] text-sm">
                   <div>
                     <div className="font-mono tabular-nums text-lg font-semibold text-[#111317]">
                       {clientCatalog.length.toLocaleString('ru-RU')} камней
@@ -1491,8 +1627,11 @@ export default function App() {
                   authError={authError}
                   canUseRedirectSignIn={canUseRedirectSignIn}
                   isSyncingCloud={isSyncingCloud}
+                  isRefreshingCloud={isRefreshingCloud}
                   syncProgress={syncProgress}
                   cloudStatusMessage={cloudStatusMessage}
+                  registryVersion={registryVersion}
+                  lastSyncAt={lastSyncAt}
                   onUpdatePricingConfig={setPricingConfig}
                   onApplyPricingToStones={handleApplyPricingToStones}
                   onUpdateDiamond={handleUpdateDiamond}
@@ -1504,6 +1643,7 @@ export default function App() {
                   onToggleSupplierActive={handleToggleSupplierActive}
                   onDeleteSupplier={handleDeleteSupplier}
                   onPublishToCloud={() => void handlePublishToCloud()}
+                  onForceRefreshCloud={() => void handleForceRefreshCloud()}
                   onRequestGoogleLogin={handleGoogleCloudLogin}
                   onRequestGoogleRedirectLogin={handleGoogleCloudRedirectLogin}
                   onOpenExcelImport={(mode) => handleOpenExcelImport('white', mode)}

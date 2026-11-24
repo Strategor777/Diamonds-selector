@@ -21,8 +21,12 @@ import {
   PricingConfig,
 } from '../types/diamond';
 import {
+  cleanOvertoneValue,
+  composeParsedFancyColor,
+  extractCertNumberFromUrl,
   isNonImageMediaUrl,
   isStrictWhiteLetterGrade,
+  normalizeStandaloneIntensity,
   parseFancyColor,
   sanitizeMediaUrl,
 } from './fancyColorParser';
@@ -34,6 +38,8 @@ export interface ColumnMapping {
   carat: number;
   color: number;
   fancyColor: number;
+  fancyIntensity: number;
+  fancyOvertone: number;
   clarity: number;
   cut: number;
   polish: number;
@@ -72,8 +78,10 @@ export const MAPPING_FIELDS: {
   { key: 'stoneType', label: 'Камень / Разновидность' },
   { key: 'shape', label: 'Форма (Shape)', required: true },
   { key: 'carat', label: 'Караты (Carat)', required: true },
-  { key: 'color', label: 'Цвет (Color / Оттенок)' },
-  { key: 'fancyColor', label: 'Фантазийный оттенок / Интенсивность' },
+  { key: 'color', label: 'Цвет (Color / Основной цвет)' },
+  { key: 'fancyColor', label: 'Фантазийный цвет (Fancy Color)' },
+  { key: 'fancyIntensity', label: 'Интенсивность (Intensity)' },
+  { key: 'fancyOvertone', label: 'Оттенок / Подтон (Overtone)' },
   { key: 'clarity', label: 'Чистота (Clarity)' },
   { key: 'priceUsd', label: 'Цена итоговая' },
   { key: 'pricePerCarat', label: 'Цена за карат (/ct)' },
@@ -133,21 +141,98 @@ const HEADER_RULES: Record<
   color: {
     exact: ['color', 'col', 'colour', 'цвет', 'окраска'],
     partial: ['color', 'colour', 'цвет', 'окраск'],
-    exclude: ['fancy', 'intensity', 'интенсив', 'comment'],
+    exclude: [
+      'fancy',
+      'intensity',
+      'overtone',
+      'undertone',
+      'secondary',
+      'shade',
+      'description',
+      'интенсив',
+      'подтон',
+      'оттен',
+      'обертон',
+      'описание',
+      'comment',
+    ],
   },
   fancyColor: {
     exact: [
       'fancy',
       'fancy color',
+      'fancy_color',
+      'fancycolor',
+      'fancy color description',
+      'color description',
       'hue',
-      'shade',
-      'intensity',
-      'оттенок',
-      'интенсивность',
       'цветность',
       'фантазийный цвет',
+      'описание цвета',
     ],
-    partial: ['fancy', 'hue', 'intensity', 'оттен', 'интенсив'],
+    partial: [
+      'fancy color',
+      'fancy_color',
+      'fancycolor',
+      'color description',
+      'hue',
+      'цветность',
+      'фантазийный цвет',
+      'описание цвет',
+    ],
+    exclude: [
+      'intensity',
+      'overtone',
+      'undertone',
+      'интенсив',
+      'подтон',
+      'обертон',
+    ],
+  },
+  fancyIntensity: {
+    exact: [
+      'fancy color intensity',
+      'fancy_color_intensity',
+      'fancy intensity',
+      'fancy_intensity',
+      'color intensity',
+      'intensity',
+      'int',
+      'интенсивность',
+      'насыщенность',
+    ],
+    partial: ['intensity', 'интенсив', 'насыщен'],
+  },
+  fancyOvertone: {
+    exact: [
+      'fancy color overtone',
+      'fancy_color_overtone',
+      'fancy overtone',
+      'fancy_overtone',
+      'color overtone',
+      'overtone',
+      'over tone',
+      'over_tone',
+      'undertone',
+      'secondary color',
+      'shade',
+      'tint',
+      'modifier',
+      'оттенок',
+      'подтон',
+      'обертон',
+    ],
+    partial: [
+      'overtone',
+      'over tone',
+      'over_tone',
+      'undertone',
+      'secondary color',
+      'shade',
+      'подтон',
+      'оттен',
+      'обертон',
+    ],
   },
   clarity: {
     exact: ['clarity', 'clar', 'чистота', 'прозрачность'],
@@ -448,6 +533,8 @@ const COLORED_HUE_WORDS = [
   'жёлт', 'желт', 'розов', 'син', 'голуб', 'зел', 'красн', 'фиолет', 'оранж',
   'шампан', 'коньяч', 'корич', 'чёрн', 'черн', 'фантаз',
 ];
+const OVERTONE_CONTENT_PATTERN =
+  /^(purplish|orangy|orangey|brownish|greenish|yellowish|pinkish|bluish|grayish|greyish|violetish|reddish|none|pure|пурпурн\S*|оранж\S*\s+подтон|коричнев\S*\s+подтон|зеленоват\S*|желтоват\S*|розоват\S*|голубоват\S*|сероват\S*|фиолетов\S*\s+подтон|красноват\S*)$/i;
 const LAB_TOKENS = new Set(['GIA', 'IGI', 'HRD', 'GRS', 'SSEF', 'GUBELIN', 'AIG', 'МГУ']);
 
 function inferColumnsFromContent(
@@ -491,6 +578,32 @@ function inferColumnsFromContent(
     ) {
       mapping.clarity = col;
       reasons.clarity = 'content';
+      usedCols.add(col);
+      continue;
+    }
+
+    if (
+      mapping.fancyIntensity < 0 &&
+      ratio((v) => {
+        const up = v.trim().toUpperCase();
+        // Exclude single white letter 'F' from triggering intensity inference by content alone
+        if (up === 'F') return false;
+        return Boolean(normalizeStandaloneIntensity(v));
+      }) >= 0.5
+    ) {
+      mapping.fancyIntensity = col;
+      reasons.fancyIntensity = 'content';
+      usedCols.add(col);
+      continue;
+    }
+
+    if (
+      mapping.fancyOvertone < 0 &&
+      ratio((v) => OVERTONE_CONTENT_PATTERN.test(v.trim())) >= 0.45 &&
+      vals.some((v) => Boolean(cleanOvertoneValue(v)))
+    ) {
+      mapping.fancyOvertone = col;
+      reasons.fancyOvertone = 'content';
       usedCols.add(col);
       continue;
     }
@@ -822,7 +935,9 @@ export function isWhiteDiamondColorGrade(rawColor: string | undefined): boolean 
 
 export function normalizeColoredStoneColor(
   rawColor: string | undefined,
-  rawFancy: string | undefined
+  rawFancy: string | undefined,
+  rawIntensity?: string | undefined,
+  rawOvertone?: string | undefined
 ): {
   color: DiamondColor;
   colorFamily: string;
@@ -832,14 +947,22 @@ export function normalizeColoredStoneColor(
 } {
   const c = (rawColor || '').trim();
   const f = (rawFancy || '').trim();
+  const cleanInt = normalizeStandaloneIntensity(rawIntensity);
+  const cleanOvt = cleanOvertoneValue(rawOvertone);
 
-  if (!c && !f) {
+  if (!c && !f && !cleanInt && !cleanOvt) {
     return { color: 'G', colorFamily: 'Бесцветный (D–J)', isWhiteLetterGrade: true };
   }
 
   // If the primary color column specifies a white diamond letter grade (D, E, F, ...)
-  // and there is no fancy colored hue in the fancy column, always route to White Diamonds.
-  if (c && isWhiteDiamondColorGrade(c) && (!f || isWhiteDiamondColorGrade(f))) {
+  // and there is no fancy colored hue / intensity / overtone, always route to White Diamonds.
+  if (
+    c &&
+    isWhiteDiamondColorGrade(c) &&
+    (!f || isWhiteDiamondColorGrade(f)) &&
+    !cleanInt &&
+    !cleanOvt
+  ) {
     const upper = c.toUpperCase();
     const letterMatch = upper.match(/^([D-Z])/);
     const normalized = letterMatch ? letterMatch[1] : upper;
@@ -850,10 +973,39 @@ export function normalizeColoredStoneColor(
     };
   }
 
-  const combined =
-    f && c && !c.toLowerCase().includes(f.toLowerCase()) ? `${f} ${c}` : c || f;
+  // Combine Fancy Color + Color without duplicating tokens (e.g. RapNet Color="FANCY" + FancyColor="Pink")
+  const baseParts: string[] = [];
+  const pushUniquePart = (part: string | undefined) => {
+    const t = (part || '').trim();
+    if (!t) return;
+    if (
+      baseParts.some((existing) =>
+        existing.toLowerCase().includes(t.toLowerCase())
+      )
+    ) {
+      return;
+    }
+    baseParts.push(t);
+  };
 
-  if (isWhiteDiamondColorGrade(combined)) {
+  // Put intensity & overtone first, then fancy color / base color so GIA word order is preserved
+  pushUniquePart(cleanInt);
+  pushUniquePart(cleanOvt);
+  pushUniquePart(f);
+  // Skip bare "FANCY" placeholder in `color` if we already have an explicit intensity/fancy color
+  if (
+    c &&
+    !(c.toLowerCase() === 'fancy' && (cleanInt || f)) &&
+    !isWhiteDiamondColorGrade(c)
+  ) {
+    pushUniquePart(c);
+  } else if (!baseParts.length && c) {
+    pushUniquePart(c);
+  }
+
+  const combined = baseParts.join(' ').trim();
+
+  if (isWhiteDiamondColorGrade(combined) && !cleanInt && !cleanOvt) {
     const upper = combined.toUpperCase();
     const letterMatch = upper.match(/^([D-Z])/);
     return {
@@ -863,14 +1015,21 @@ export function normalizeColoredStoneColor(
     };
   }
 
-  // Parse GIA / RapNet trade codes (FIP, F V B, FVOP, Intensepink, FANCY INTENSE PINK, etc.)
-  const parsed = parseFancyColor(combined);
+  // Parse GIA / RapNet trade codes and compose with any separate intensity/overtone cells
+  const parsed = composeParsedFancyColor({
+    color: combined || f || c,
+    fancyIntensity: cleanInt,
+    fancyOvertone: cleanOvt,
+    isFancyColor: true,
+    directory: 'fancy',
+  });
+
   return {
     color: parsed.canonicalColor,
     colorFamily: parsed.colorFamily,
     isWhiteLetterGrade: false,
-    fancyIntensity: parsed.fancyIntensity,
-    fancyOvertone: parsed.fancyOvertone,
+    fancyIntensity: parsed.fancyIntensity || cleanInt,
+    fancyOvertone: cleanOvertoneValue(parsed.fancyOvertone) || cleanOvt,
   };
 }
 
@@ -1049,7 +1208,9 @@ export function mapRowsToDiamonds(
       fancyOvertone: parsedOvertone,
     } = normalizeColoredStoneColor(
       cell(row, mapping.color),
-      cell(row, mapping.fancyColor)
+      cell(row, mapping.fancyColor),
+      cell(row, mapping.fancyIntensity),
+      cell(row, mapping.fancyOvertone)
     );
     const clarity = normalizeClarity(cell(row, mapping.clarity));
     const isColored = !isWhiteLetterGrade && colorFamily !== 'Бесцветный (D–J)';
@@ -1120,11 +1281,12 @@ export function mapRowsToDiamonds(
     });
     const previousPriceUsd = prevRaw > priceUsd ? Math.round(prevRaw) : undefined;
 
+    const rawCertUrl = sanitizeMediaUrl(cell(row, mapping.certUrl));
     const certLab = normalizeLab(cell(row, mapping.certLab));
     const certNumber =
       cell(row, mapping.certNumber) ||
+      extractCertNumberFromUrl(rawCertUrl) ||
       `${source === 'xlsx' ? 'XL' : 'GS'}-${2400000 + i * 137}`;
-    const rawCertUrl = cell(row, mapping.certUrl);
     const certUrl =
       rawCertUrl && rawCertUrl.startsWith('http')
         ? rawCertUrl

@@ -5,6 +5,7 @@ import {
   doc,
   getDocFromServer,
   getFirestore,
+  initializeFirestore,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -45,7 +46,18 @@ function initFirebaseServices() {
     return { app: firebaseApp, auth: firebaseAuth, db: firestoreDb };
   }
   const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-  const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  let db: Firestore;
+  try {
+    db = initializeFirestore(
+      app,
+      {
+        experimentalForceLongPolling: true,
+      },
+      firebaseConfig.firestoreDatabaseId
+    );
+  } catch {
+    db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  }
   const auth = getAuth(app);
   firebaseApp = app;
   firebaseAuth = auth;
@@ -73,6 +85,26 @@ export function isFirestoreQuotaError(error: unknown): boolean {
     msg.includes('quota exceeded') ||
     msg.includes('resource_exhausted') ||
     msg.includes('free daily read units')
+  );
+}
+
+export function isFirestoreOfflineError(error: unknown): boolean {
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as { code?: unknown }).code || '').toLowerCase()
+      : '';
+  const msg =
+    error instanceof Error
+      ? error.message.toLowerCase()
+      : String(error || '').toLowerCase();
+
+  return (
+    code === 'unavailable' ||
+    code === 'failed-precondition' ||
+    msg.includes('client is offline') ||
+    msg.includes('could not reach cloud firestore') ||
+    msg.includes('backend didn\'t respond') ||
+    msg.includes('network error')
   );
 }
 
