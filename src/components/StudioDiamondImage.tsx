@@ -1,14 +1,48 @@
-import React, { useEffect, useId, useMemo, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { SHAPE_SHORT_RU } from '../data/diamonds';
 import {
   CalibratedStudioVisual,
   DiamondOpticalPalette,
-  StudioMacroMaskShape,
   getCalibratedStudioVisual,
-  hasExternalSupplierPhoto,
+  resolveSupplierPhotoUrl,
 } from '../lib/certVerification';
-import { sanitizeMediaUrl } from '../lib/fancyColorParser';
+import {
+  getCachedTintedStudioUrl,
+  renderTintedStudioImage,
+} from '../lib/studioTintEngine';
 import type { Diamond, DiamondShape } from '../types/diamond';
+
+const MAX_EXTERNAL_CACHE_ENTRIES = 3000;
+const FAILED_RETRY_TTL_MS = 90_000;
+
+interface ExternalPhotoCacheEntry {
+  status: 'loaded' | 'failed';
+  ts: number;
+}
+
+const EXTERNAL_PHOTO_STATUS_CACHE = new Map<string, ExternalPhotoCacheEntry>();
+
+function getExternalPhotoCache(url: string): 'loaded' | 'failed' | undefined {
+  const entry = EXTERNAL_PHOTO_STATUS_CACHE.get(url);
+  if (!entry) return undefined;
+  if (entry.status === 'failed' && Date.now() - entry.ts > FAILED_RETRY_TTL_MS) {
+    EXTERNAL_PHOTO_STATUS_CACHE.delete(url);
+    return undefined;
+  }
+  return entry.status;
+}
+
+function setExternalPhotoCache(url: string, status: 'loaded' | 'failed'): void {
+  if (EXTERNAL_PHOTO_STATUS_CACHE.has(url)) {
+    EXTERNAL_PHOTO_STATUS_CACHE.delete(url);
+  }
+  EXTERNAL_PHOTO_STATUS_CACHE.set(url, { status, ts: Date.now() });
+  while (EXTERNAL_PHOTO_STATUS_CACHE.size > MAX_EXTERNAL_CACHE_ENTRIES) {
+    const oldest = EXTERNAL_PHOTO_STATUS_CACHE.keys().next().value;
+    if (oldest === undefined) break;
+    EXTERNAL_PHOTO_STATUS_CACHE.delete(oldest);
+  }
+}
 
 interface StudioDiamondImageProps {
   diamond: Diamond;
@@ -18,77 +52,6 @@ interface StudioDiamondImageProps {
   zoomStyle?: React.CSSProperties;
   onClick?: () => void;
   onSourceModeChange?: (isStudio: boolean) => void;
-}
-
-function renderMacroSilhouette(maskShape: StudioMacroMaskShape) {
-  switch (maskShape) {
-    case 'round':
-      return <circle cx="502" cy="518" r="265" />;
-    case 'oval':
-      return <ellipse cx="500" cy="503" rx="218" ry="302" />;
-    case 'emerald':
-      return (
-        <polygon points="334,198 672,198 752,278 752,730 672,810 334,810 254,730 254,278" />
-      );
-    case 'princess':
-      return <rect x="242" y="244" width="516" height="516" rx="4" />;
-    case 'cushion':
-      return (
-        <path d="M 500 238 C 632 238, 704 256, 732 288 C 756 322, 764 402, 764 506 C 764 610, 754 688, 726 724 C 696 758, 626 774, 500 774 C 374 774, 304 758, 274 724 C 246 688, 234 610, 234 506 C 234 402, 244 322, 268 288 C 296 256, 368 238, 500 238 Z" />
-      );
-    case 'pear':
-      return (
-        <path d="M 498 198 C 570 258, 714 408, 714 568 C 714 706, 622 792, 498 792 C 374 792, 284 706, 284 568 C 284 408, 426 258, 498 198 Z" />
-      );
-    case 'radiant':
-      return (
-        <polygon points="338,228 662,228 728,294 728,730 662,796 338,796 272,730 272,294" />
-      );
-    case 'marquise':
-      return (
-        <path d="M 499 166 C 618 272, 684 388, 684 505 C 684 622, 618 738, 499 844 C 380 738, 314 622, 314 505 C 314 388, 380 272, 499 166 Z" />
-      );
-    case 'heart':
-      return (
-        <path d="M 500 338 C 460 282, 408 264, 356 264 C 266 264, 216 330, 216 418 C 216 558, 344 676, 500 784 C 656 676, 786 558, 786 418 C 786 330, 736 264, 646 264 C 594 264, 540 282, 500 338 Z" />
-      );
-    case 'asscher':
-      return (
-        <polygon points="302,198 704,198 802,296 802,704 704,802 302,802 204,704 204,296" />
-      );
-    case 'baguette':
-      return <rect x="306" y="174" width="392" height="664" rx="2" />;
-    case 'trilliant':
-      return (
-        <path d="M 500 206 C 588 342, 718 548, 800 694 C 770 762, 636 792, 502 792 C 368 792, 234 762, 204 694 C 286 548, 412 342, 500 206 Z" />
-      );
-    case 'shield':
-      return (
-        <polygon points="316,198 684,198 764,316 760,368 500,860 240,368 236,316" />
-      );
-    case 'kite':
-      return <polygon points="498,178 738,416 500,864 258,416" />;
-    case 'hexagon':
-      return (
-        <polygon points="500,136 736,310 736,704 500,884 264,704 264,310" />
-      );
-    case 'lozenge':
-      return <polygon points="500,112 764,504 500,912 236,504" />;
-    case 'half_moon':
-      return <path d="M 302 333 A 268 268 0 1 1 298 695 Z" />;
-    case 'trapezoid':
-      return <polygon points="320,198 680,198 800,816 192,816" />;
-    case 'cadillac':
-      return <polygon points="260,212 740,212 820,376 500,834 180,376" />;
-    case 'briolette':
-      return (
-        <path d="M 500 148 C 582 252, 746 426, 746 588 C 746 742, 646 856, 500 856 C 354 856, 252 742, 252 588 C 252 426, 418 252, 500 148 Z" />
-      );
-    case 'cabochon':
-      return <ellipse cx="500" cy="494" rx="232" ry="294" />;
-    case 'rose_cut':
-      return <circle cx="500" cy="518" r="266" />;
-  }
 }
 
 interface FacetedShapeGeometry {
@@ -157,6 +120,36 @@ function getFacetedGeometry(shape: DiamondShape): FacetedShapeGeometry {
         ),
         shadowRx: 54,
         shadowCy: 222,
+      };
+    case 'Moval':
+      return {
+        outline: (
+          <path d="M120 24C154 24 176 70 176 120C176 170 154 216 120 216C86 216 64 170 64 120C64 70 86 24 120 24Z" />
+        ),
+        table: (
+          <path d="M120 54C142 54 154 84 154 120C154 156 142 186 120 186C98 186 86 156 86 120C86 84 98 54 120 54Z" />
+        ),
+        facets: (
+          <>
+            <path d="M120 24V216M64 120H176M78 72L154 120M162 72L86 120M78 168L154 120M162 168L86 120" />
+          </>
+        ),
+        shadowRx: 54,
+        shadowCy: 222,
+      };
+    case 'Old Mine':
+    case 'Antique Cushion':
+      return {
+        outline: <rect x="44" y="42" width="152" height="156" rx="44" />,
+        table: <rect x="84" y="82" width="72" height="76" rx="18" />,
+        facets: (
+          <>
+            <circle cx="120" cy="120" r="11" />
+            <path d="M120 42V82M120 158V198M44 120H84M156 120H196M64 62L88 86M176 62L152 86M64 178L88 154M176 178L152 154" />
+          </>
+        ),
+        shadowRx: 72,
+        shadowCy: 208,
       };
     case 'Heart':
       return {
@@ -260,13 +253,13 @@ function getFacetedGeometry(shape: DiamondShape): FacetedShapeGeometry {
       };
     case 'Half Moon':
       return {
-        outline: <path d="M72 38H92C146 38 184 74 184 120C184 166 146 202 92 202H72V38Z" />,
-        table: <path d="M92 68H98C132 68 154 90 154 120C154 150 132 172 98 172H92V68Z" />,
+        outline: <path d="M26 164A94 114 0 0 1 214 164Z" />,
+        table: <path d="M58 148A62 72 0 0 1 182 148Z" />,
         facets: (
-          <path d="M72 120H184M72 38L92 68M72 202L92 172M140 52L130 82M140 188L130 158M174 84L148 100M174 156L148 140" />
+          <path d="M120 50V164M26 164L58 148M214 164L182 148M68 78L88 106M172 78L152 106M40 120L68 128M200 120L172 128" />
         ),
-        shadowRx: 58,
-        shadowCy: 212,
+        shadowRx: 82,
+        shadowCy: 178,
       };
     case 'Trapezoid':
       return {
@@ -331,7 +324,7 @@ const FacetedStudioGemSvg: React.FC<{
   palette: DiamondOpticalPalette;
   compact?: boolean;
 }> = ({ shape, palette, compact }) => {
-  const uid = useId().replace(/:/g, '');
+  const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const geom = useMemo(() => getFacetedGeometry(shape), [shape]);
   const strokeColor = palette.isBlack
     ? 'rgba(255,255,255,0.34)'
@@ -446,78 +439,96 @@ const TintedMacroStudioView: React.FC<{
   alt: string;
   compact?: boolean;
 }> = ({ visual, alt, compact }) => {
-  const uid = useId().replace(/:/g, '');
   const maskShape = visual.maskShape || 'round';
   const { palette } = visual;
   const lut = palette.lut;
+  const lutR = lut?.r || '';
+  const lutG = lut?.g || '';
+  const lutB = lut?.b || '';
+  const aspectScaleX = visual.aspectScaleX ?? 1;
+  const aspectScaleY = visual.aspectScaleY ?? 1;
+  const preserveSpecular = !palette.isBlack && !palette.darknessOverlay;
+
+  const tintOptions = useMemo(
+    () => ({ aspectScaleX, aspectScaleY, preserveSpecular }),
+    [aspectScaleX, aspectScaleY, preserveSpecular]
+  );
+
+  const syncCachedUrl = useMemo(
+    () => (lut ? getCachedTintedStudioUrl(visual.src, maskShape, lut, tintOptions) : null),
+    [visual.src, maskShape, lut, lutR, lutG, lutB, tintOptions]
+  );
+
+  const [renderedUrl, setRenderedUrl] = useState<string | null>(syncCachedUrl);
+
+  useEffect(() => {
+    if (!lut) {
+      setRenderedUrl(null);
+      return;
+    }
+    const hit = getCachedTintedStudioUrl(visual.src, maskShape, lut, tintOptions);
+    if (hit) {
+      setRenderedUrl(hit);
+      return;
+    }
+    setRenderedUrl(null);
+    let cancelled = false;
+    void renderTintedStudioImage(visual.src, maskShape, lut, tintOptions).then((dataUrl) => {
+      if (!cancelled && dataUrl) {
+        setRenderedUrl(dataUrl);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [visual.src, maskShape, lut, lutR, lutG, lutB, tintOptions]);
+
+  const effectiveUrl = syncCachedUrl || renderedUrl;
+
+  if (effectiveUrl) {
+    return (
+      <div className="relative w-full h-full aspect-square overflow-hidden bg-[#F1F2F4]">
+        <img
+          src={effectiveUrl}
+          alt={alt}
+          decoding="async"
+          referrerPolicy="no-referrer"
+          className="block w-full h-full object-cover object-center select-none"
+        />
+      </div>
+    );
+  }
+
+  // Instant pure-CSS colorized preview during the ~3ms Canvas 2D LUT warm-up
+  // so colored stones never flash pure white even on a cold cache.
+  const showInstantGlaze = !palette.isWhite;
+  const hasAspectTransform = aspectScaleX !== 1 || aspectScaleY !== 1;
 
   return (
     <div className="relative w-full h-full aspect-square overflow-hidden bg-[#F1F2F4]">
-      {/* Spotless bright-lightbox studio background + native image accessibility & lazy decoding */}
       <img
         src={visual.src}
         alt={alt}
         loading={compact ? 'lazy' : undefined}
         decoding="async"
         referrerPolicy="no-referrer"
+        style={
+          hasAspectTransform
+            ? { transform: `scale(${aspectScaleX}, ${aspectScaleY})` }
+            : undefined
+        }
         className="block w-full h-full object-cover object-center select-none"
       />
-      {/* Physically calibrated 6-stop sRGB optical absorption LUT applied directly to the real
-          diamond photograph inside a feathered girdle mask — preserves 100% of razor-sharp facets,
-          deep pavilion contrasts, and crisp white specular sparkle with zero flat overlay wash. */}
-      {lut && (
-        <svg
-          viewBox="0 0 1000 1000"
-          preserveAspectRatio="xMidYMid slice"
-          className="absolute inset-0 w-full h-full pointer-events-none select-none"
+      {showInstantGlaze && (
+        <div
           aria-hidden="true"
-        >
-          <defs>
-            <filter id={`${uid}-feather`} x="-5%" y="-5%" width="110%" height="110%">
-              <feGaussianBlur stdDeviation="1.6" />
-            </filter>
-            <mask
-              id={`${uid}-mask`}
-              maskUnits="userSpaceOnUse"
-              x="0"
-              y="0"
-              width="1000"
-              height="1000"
-            >
-              <rect x="0" y="0" width="1000" height="1000" fill="#000000" />
-              <g fill="#FFFFFF" filter={`url(#${uid}-feather)`}>
-                {renderMacroSilhouette(maskShape)}
-              </g>
-            </mask>
-            <filter
-              id={`${uid}-lut`}
-              colorInterpolationFilters="sRGB"
-              x="0%"
-              y="0%"
-              width="100%"
-              height="100%"
-            >
-              <feColorMatrix type="saturate" values="0.18" result="neutral" />
-              <feComponentTransfer in="neutral">
-                <feFuncR type="table" tableValues={lut.r} />
-                <feFuncG type="table" tableValues={lut.g} />
-                <feFuncB type="table" tableValues={lut.b} />
-              </feComponentTransfer>
-            </filter>
-          </defs>
-
-          <g mask={`url(#${uid}-mask)`}>
-            <image
-              href={visual.src}
-              x="0"
-              y="0"
-              width="1000"
-              height="1000"
-              preserveAspectRatio="xMidYMid slice"
-              filter={`url(#${uid}-lut)`}
-            />
-          </g>
-        </svg>
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background: `radial-gradient(circle at 50% 50%, ${palette.primaryHex} 0%, ${palette.deepHex} 46%, transparent 66%)`,
+            mixBlendMode: 'multiply',
+            opacity: Math.min(0.75, Math.max(0.28, palette.multiplyOpacity * 0.78)),
+          }}
+        />
       )}
     </div>
   );
@@ -538,6 +549,7 @@ export const StudioDiamondImage: React.FC<StudioDiamondImageProps> = React.memo(
       // eslint-disable-next-line react-hooks/exhaustive-deps
       [
         diamond.shape,
+        diamond.lwRatio,
         diamond.color,
         diamond.colorFamily,
         diamond.fancyIntensity,
@@ -551,25 +563,47 @@ export const StudioDiamondImage: React.FC<StudioDiamondImageProps> = React.memo(
 
     const externalUrl = useMemo(() => {
       if (preferStudio || diamond.useStudioPhoto) return undefined;
-      if (!hasExternalSupplierPhoto(diamond)) return undefined;
-      return sanitizeMediaUrl(diamond.imageUrl);
-    }, [diamond, preferStudio]);
+      return resolveSupplierPhotoUrl(diamond);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [diamond.imageUrl, diamond.videoUrl, diamond.useStudioPhoto, preferStudio]);
 
-    const [externalStatus, setExternalStatus] = useState<'loading' | 'loaded' | 'failed'>(
-      () => (externalUrl ? 'loading' : 'failed')
-    );
+    const externalImgRef = useRef<HTMLImageElement | null>(null);
+
+    const [externalStatus, setExternalStatus] = useState<'loading' | 'loaded' | 'failed'>(() => {
+      if (!externalUrl) return 'failed';
+      return getExternalPhotoCache(externalUrl) || 'loading';
+    });
 
     useEffect(() => {
       if (!externalUrl) {
         setExternalStatus('failed');
         return;
       }
+
+      const cached = getExternalPhotoCache(externalUrl);
+      if (cached) {
+        setExternalStatus(cached);
+        return;
+      }
+
+      // Check if the <img> already completed synchronously from browser HTTP/memory cache
+      // so we never clobber an already-loaded image back to 'loading'.
+      const img = externalImgRef.current;
+      if (img && img.complete && img.currentSrc) {
+        if (img.naturalWidth >= 48 && img.naturalHeight >= 48) {
+          setExternalPhotoCache(externalUrl, 'loaded');
+          setExternalStatus('loaded');
+          return;
+        }
+        if (img.naturalWidth === 0) {
+          setExternalPhotoCache(externalUrl, 'failed');
+          setExternalStatus('failed');
+          return;
+        }
+      }
+
       setExternalStatus('loading');
-      const timer = window.setTimeout(() => {
-        setExternalStatus((prev) => (prev === 'loading' ? 'failed' : prev));
-      }, 8000);
-      return () => window.clearTimeout(timer);
-    }, [diamond.id, externalUrl, preferStudio, diamond.useStudioPhoto]);
+    }, [externalUrl]);
 
     const showExternalImage = Boolean(externalUrl && externalStatus === 'loaded');
     const attemptExternalLoad = Boolean(externalUrl && externalStatus !== 'failed');
@@ -580,23 +614,36 @@ export const StudioDiamondImage: React.FC<StudioDiamondImageProps> = React.memo(
 
     const altText = `${SHAPE_SHORT_RU[diamond.shape] || diamond.shape} ${diamond.carat.toFixed(2)} ct ${diamond.color} ${diamond.clarity}`;
 
+    const nativeAspectX = studioVisual.aspectScaleX ?? 1;
+    const nativeAspectY = studioVisual.aspectScaleY ?? 1;
+    const nativeImgStyle: React.CSSProperties | undefined =
+      studioVisual.filter || nativeAspectX !== 1 || nativeAspectY !== 1
+        ? {
+            ...(studioVisual.filter ? { filter: studioVisual.filter } : {}),
+            ...(nativeAspectX !== 1 || nativeAspectY !== 1
+              ? { transform: `scale(${nativeAspectX}, ${nativeAspectY})` }
+              : {}),
+          }
+        : undefined;
+
     return (
       <div
         onClick={onClick}
         style={zoomStyle}
-        className={`relative w-full h-full min-w-0 min-h-0 flex items-center justify-center overflow-hidden bg-[#F1F2F4] ${className}`}
+        className={`relative w-full h-full min-w-0 min-h-0 flex items-center justify-center overflow-hidden bg-[#EAECEF] ${className}`}
       >
         {/* Instant calibrated studio base layer — ensures ZERO blank frames while an external
             supplier URL is loading, stalled, blocked, or returning a broken/1×1 placeholder. */}
         {!showExternalImage &&
           (studioVisual.mode === 'native-photo' ? (
             <img
+              key={studioVisual.src}
               src={studioVisual.src}
               alt={altText}
               loading={compact ? 'lazy' : undefined}
               decoding="async"
               referrerPolicy="no-referrer"
-              style={studioVisual.filter ? { filter: studioVisual.filter } : undefined}
+              style={nativeImgStyle}
               className={
                 studioVisual.seamless
                   ? 'w-full h-full object-cover object-center block select-none'
@@ -624,6 +671,8 @@ export const StudioDiamondImage: React.FC<StudioDiamondImageProps> = React.memo(
         {/* External supplier photograph — only revealed once genuinely loaded with valid pixel dimensions */}
         {attemptExternalLoad && externalUrl && (
           <img
+            ref={externalImgRef}
+            key={externalUrl}
             src={externalUrl}
             alt={altText}
             loading={compact ? 'lazy' : undefined}
@@ -632,12 +681,17 @@ export const StudioDiamondImage: React.FC<StudioDiamondImageProps> = React.memo(
             onLoad={(e) => {
               const img = e.currentTarget;
               if (img.naturalWidth < 48 || img.naturalHeight < 48) {
+                setExternalPhotoCache(externalUrl, 'failed');
                 setExternalStatus('failed');
               } else {
+                setExternalPhotoCache(externalUrl, 'loaded');
                 setExternalStatus('loaded');
               }
             }}
-            onError={() => setExternalStatus('failed')}
+            onError={() => {
+              setExternalPhotoCache(externalUrl, 'failed');
+              setExternalStatus('failed');
+            }}
             className={
               showExternalImage
                 ? `max-w-full max-h-full w-full h-full object-contain object-center block bg-[#F8F9FB] ${compact ? 'p-0.5' : 'p-2'}`

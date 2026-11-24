@@ -192,15 +192,13 @@ export const CertBatchVerifyModal: React.FC<CertBatchVerifyModalProps> = ({
     const updatedStones = valid.map(({ stone, verification }) => {
       const s = stone!;
       const v = verification!;
-      const colorChanged =
-        Boolean(v.normalizedColor) &&
-        s.color.trim().toLowerCase() !== (v.normalizedColor || '').trim().toLowerCase();
+      // Rule 1: Supplier photo always takes priority when available under 'smart' policy
       const useStudio =
         photoPolicy === 'always-studio'
           ? true
           : photoPolicy === 'keep'
             ? false
-            : s.useStudioPhoto || !hasExternalSupplierPhoto(s) || colorChanged;
+            : !hasExternalSupplierPhoto(s);
 
       return applyVerifiedParamsToDiamond(s, v, {
         useStudioPhoto: useStudio,
@@ -225,8 +223,15 @@ export const CertBatchVerifyModal: React.FC<CertBatchVerifyModalProps> = ({
     );
     if (!verified) return;
 
+    const useStudio =
+      photoPolicy === 'always-studio'
+        ? true
+        : photoPolicy === 'keep'
+          ? false
+          : !hasExternalSupplierPhoto(stone);
+
     const updated = applyVerifiedColorToDiamond(stone, verified, {
-      useStudioPhoto: photoPolicy !== 'keep',
+      useStudioPhoto: useStudio,
       source: 'manual',
     });
     onBatchApplyDiamonds([updated]);

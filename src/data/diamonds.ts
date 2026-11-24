@@ -153,12 +153,15 @@ export const STUDIO_GEM_PHOTOS = {
   kite_white: '/src/assets/images/white_colorless_kite_1795402965738.jpg',
   hexagon_white: '/src/assets/images/white_colorless_hexagon_1795402964318.jpg',
   lozenge_white: '/src/assets/images/white_colorless_lozenge_1795402965739.jpg',
-  half_moon_white: '/src/assets/images/white_colorless_half_moon_1795402966048.jpg',
+  half_moon_white: '/src/assets/images/white_colorless_half_moon_v2_1795550725999.jpg',
+  half_moon_blue: '/src/assets/images/fancy_intense_blue_half_moon_1795550848114.jpg',
   trapezoid_white: '/src/assets/images/white_colorless_trapezoid_1795402966233.jpg',
   cadillac_white: '/src/assets/images/white_colorless_cadillac_1795402965864.jpg',
   briolette_white: '/src/assets/images/white_colorless_briolette_1795402965985.jpg',
   cabochon_white: '/src/assets/images/white_colorless_cabochon_1795402965860.jpg',
   rose_cut_white: '/src/assets/images/white_colorless_rose_cut_1795402966233.jpg',
+  moval_white: '/src/assets/images/white_colorless_moval_1795554258924.jpg',
+  old_mine_white: '/src/assets/images/white_colorless_old_mine_1795554259193.jpg',
   round_pink: '/src/assets/images/fancy_intense_pink_round_v2_1795320017046.jpg',
   round_yellow: '/src/assets/images/fancy_intense_yellow_round_1795326337412.jpg',
   round_blue: '/src/assets/images/fancy_intense_blue_round_1795326338645.jpg',
@@ -184,11 +187,11 @@ export const SHAPE_IMAGE_MAP: Record<DiamondShape, string> = {
   Marquise: STUDIO_GEM_PHOTOS.marquise_white,
   Heart: STUDIO_GEM_PHOTOS.heart_white,
   Asscher: STUDIO_GEM_PHOTOS.asscher_white,
-  'Old Mine': STUDIO_GEM_PHOTOS.cushion_white,
+  'Old Mine': STUDIO_GEM_PHOTOS.old_mine_white,
   'Old European': STUDIO_GEM_PHOTOS.round_white,
-  'Antique Cushion': STUDIO_GEM_PHOTOS.cushion_white,
+  'Antique Cushion': STUDIO_GEM_PHOTOS.old_mine_white,
   'Rose Cut': STUDIO_GEM_PHOTOS.rose_cut_white,
-  Moval: STUDIO_GEM_PHOTOS.oval_white,
+  Moval: STUDIO_GEM_PHOTOS.moval_white,
   Shield: STUDIO_GEM_PHOTOS.shield_white,
   Kite: STUDIO_GEM_PHOTOS.kite_white,
   Hexagon: STUDIO_GEM_PHOTOS.hexagon_white,
@@ -366,6 +369,13 @@ export function getFancyDiamondImage(
     return STUDIO_GEM_PHOTOS.round_white;
   }
 
+  if (
+    fallbackShape === 'Half Moon' &&
+    (family.includes('син') || family.includes('голуб') || hay.includes('blue') || hay.includes('aqua'))
+  ) {
+    return STUDIO_GEM_PHOTOS.half_moon_blue;
+  }
+
   // All non-Round cuts use their exact matching bright-studio shape master (calibrated in StudioDiamondImage)
   return SHAPE_IMAGE_MAP[fallbackShape] || STUDIO_GEM_PHOTOS.round_white;
 }
@@ -410,7 +420,7 @@ export function getColorHexTint(
     return { base: '#FFCDD2', deep: '#C62828', facet: 'rgba(136, 14, 30, 0.34)' };
   }
   if (hay.includes('син') || hay.includes('голуб') || hay.includes('сапфир') || hay.includes('blue') || hay.includes('aqua')) {
-    return { base: '#DBEAFE', deep: '#3B82F6', facet: 'rgba(29, 78, 216, 0.32)' };
+    return { base: '#E4F4FC', deep: '#6EB5DA', facet: 'rgba(59, 130, 173, 0.30)' };
   }
   if (hay.includes('зел') || hay.includes('изумруд') || hay.includes('green') || hay.includes('mint')) {
     return { base: '#D1FAE5', deep: '#10B981', facet: 'rgba(4, 120, 87, 0.32)' };

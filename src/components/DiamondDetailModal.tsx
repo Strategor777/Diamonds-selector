@@ -63,13 +63,14 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
   const [loupePos, setLoupePos] = useState({ x: 50, y: 50 });
   const [isShowingStudio, setIsShowingStudio] = useState(false);
 
-  // Local one-time certificate verification state (no external API exchange)
-  const [manualColorInput, setManualColorInput] = useState('');
-  const [manualApplyStudio, setManualApplyStudio] = useState(true);
-  const [verifyNotice, setVerifyNotice] = useState<string | null>(null);
-
   const studioVisual = diamond ? getCalibratedStudioVisual(diamond) : undefined;
   const externalPhotoAvailable = diamond ? hasExternalSupplierPhoto(diamond) : false;
+
+  // Local one-time certificate verification state (no external API exchange)
+  // Rule 1: never override an existing supplier photo by default when confirming certificate color
+  const [manualColorInput, setManualColorInput] = useState('');
+  const [manualApplyStudio, setManualApplyStudio] = useState(!externalPhotoAvailable);
+  const [verifyNotice, setVerifyNotice] = useState<string | null>(null);
 
   useEffect(() => {
     setActiveTab(initialTab);
@@ -79,8 +80,8 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
   useEffect(() => {
     setVerifyNotice(null);
     setManualColorInput('');
-    setManualApplyStudio(true);
-  }, [diamond?.id]);
+    setManualApplyStudio(!externalPhotoAvailable);
+  }, [diamond?.id, externalPhotoAvailable]);
 
   useEffect(() => {
     if (!diamond) return;
@@ -233,7 +234,7 @@ export const DiamondDetailModal: React.FC<DiamondDetailModalProps> = ({
                   }`}
                 >
                   <PlayCircle className="w-3.5 h-3.5" />
-                  {hasRealVideo ? 'Видео 360°' : '360° макет'}
+                  {hasRealVideo ? 'Видео 360°' : '360° обзор'}
                 </button>
                 <button
                   type="button"

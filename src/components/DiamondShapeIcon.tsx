@@ -199,9 +199,9 @@ export const DiamondShapeIcon: React.FC<DiamondShapeIconProps> = ({
     case 'Half Moon':
       return (
         <svg viewBox="0 0 40 40" className={className} fill="none" aria-hidden="true">
-          <path d="M12 6H15C24.5 6 31 12.2 31 20C31 27.8 24.5 34 15 34H12V6Z" stroke="currentColor" strokeWidth="1.4" fill={fill} fillOpacity={fillOpacity} />
-          <path d="M15.5 11H16.5C22.2 11 26 15 26 20C26 25 22.2 29 16.5 29H15.5V11Z" stroke="currentColor" strokeWidth="1" opacity="0.7" />
-          <path d="M12 20H31M12 6L15.5 11M12 34L15.5 29" stroke="currentColor" strokeWidth="0.9" opacity="0.55" />
+          <path d="M5 28A15 17 0 0 1 35 28Z" stroke="currentColor" strokeWidth="1.4" fill={fill} fillOpacity={fillOpacity} />
+          <path d="M10.5 25A9.5 10.5 0 0 1 29.5 25Z" stroke="currentColor" strokeWidth="1" opacity="0.7" />
+          <path d="M20 11V28M5 28L10.5 25M35 28L29.5 25M12 16L15.5 19M28 16L24.5 19" stroke="currentColor" strokeWidth="0.9" opacity="0.55" />
         </svg>
       );
     case 'Trapezoid':

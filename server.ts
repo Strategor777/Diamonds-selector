@@ -72,7 +72,13 @@ async function startServer() {
         res.status(404).json({ error: 'Каталог ещё не опубликован.' });
         return;
       }
-      res.setHeader('Cache-Control', 'public, max-age=60');
+      const etag = `W/"meta-v${meta.version}-${meta.shardCount}-${meta.totalCount}"`;
+      res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
+      res.setHeader('ETag', etag);
+      if (req.headers['if-none-match'] === etag) {
+        res.status(304).end();
+        return;
+      }
       res.json(meta);
     } catch {
       res.status(502).json({ error: 'Не удалось получить метаданные каталога.' });
@@ -101,7 +107,14 @@ async function startServer() {
         res.status(404).json({ error: 'Каталог ещё не опубликован.' });
         return;
       }
-      res.setHeader('Cache-Control', 'public, max-age=60');
+      const indicesKey = indices ? indices.join('.') : 'all';
+      const etag = `W/"cat-v${payload.version}-${payload.upToDate ? 'uptodate' : indicesKey}-${payload.shardCount}-${payload.totalCount}"`;
+      res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
+      res.setHeader('ETag', etag);
+      if (req.headers['if-none-match'] === etag) {
+        res.status(304).end();
+        return;
+      }
       res.json(payload);
     } catch {
       res.status(502).json({ error: 'Не удалось загрузить публичный каталог.' });

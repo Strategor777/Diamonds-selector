@@ -26,10 +26,74 @@ export function isVerifiableCertNumber(certNumber: string | undefined): boolean 
   return CERT_NUMBER_REGEX.test(clean);
 }
 
-export function hasExternalSupplierPhoto(diamond: Diamond): boolean {
+/**
+ * Derives the official supplier still-photograph URL from known 360° gem viewer URLs
+ * when a supplier feed provides only a 360° viewer link without a separate image column.
+ * Strictly respects Rule 1: supplier media is always attempted before studio fallback.
+ */
+export function deriveSupplierStillPhotoFromVideo(
+  videoUrl: string | undefined
+): string | undefined {
+  const sanitized = sanitizeMediaUrl(videoUrl);
+  if (!sanitized) return undefined;
+  try {
+    const parsed = new URL(sanitized);
+    const host = parsed.hostname.toLowerCase();
+    const pathLower = parsed.pathname.toLowerCase();
+    const stoneId = parsed.searchParams.get('d')?.trim();
+
+    if (!stoneId || !/^[A-Za-z0-9._-]{2,80}$/.test(stoneId)) {
+      return undefined;
+    }
+
+    // Standard gem360.in viewer -> /imaged/<d>/still.jpg
+    if (host === 'view.gem360.in' && pathLower.includes('gem360.html')) {
+      return `https://view.gem360.in/imaged/${encodeURIComponent(stoneId)}/still.jpg`;
+    }
+
+    // Standard v360.in vision360 viewer -> <surl>/imaged/<d>/still.jpg or https://<host>/imaged/<d>/still.jpg
+    if (host.endsWith('.v360.in') && pathLower.includes('vision360.html')) {
+      const surlRaw = parsed.searchParams.get('surl')?.trim();
+      if (surlRaw) {
+        const cleanSurl = sanitizeMediaUrl(surlRaw);
+        if (cleanSurl) {
+          const base = cleanSurl.replace(/\/+$/, '');
+          return `${base}/imaged/${encodeURIComponent(stoneId)}/still.jpg`;
+        }
+      }
+      if (host !== 'v360.in') {
+        return `${parsed.origin}/imaged/${encodeURIComponent(stoneId)}/still.jpg`;
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Resolves the highest-priority real supplier photograph URL for a diamond:
+ * 1) Direct supplier imageUrl (http/https image)
+ * 2) Official supplier still photograph derived from the supplier's 360° viewer URL
+ */
+export function resolveSupplierPhotoUrl(
+  diamond: Pick<Diamond, 'imageUrl' | 'videoUrl'>
+): string | undefined {
   const sanitized = sanitizeMediaUrl(diamond.imageUrl);
-  if (!sanitized || isNonImageMediaUrl(sanitized)) return false;
-  return sanitized.startsWith('http://') || sanitized.startsWith('https://');
+  if (
+    sanitized &&
+    !isNonImageMediaUrl(sanitized) &&
+    (sanitized.startsWith('http://') || sanitized.startsWith('https://'))
+  ) {
+    return sanitized;
+  }
+  return deriveSupplierStillPhotoFromVideo(diamond.videoUrl);
+}
+
+export function hasExternalSupplierPhoto(
+  diamond: Pick<Diamond, 'imageUrl' | 'videoUrl'>
+): boolean {
+  return Boolean(resolveSupplierPhotoUrl(diamond));
 }
 
 /**
@@ -293,7 +357,9 @@ export type StudioMacroMaskShape =
   | 'cadillac'
   | 'briolette'
   | 'cabochon'
-  | 'rose_cut';
+  | 'rose_cut'
+  | 'moval'
+  | 'old_mine';
 
 export interface DiamondOpticalLut {
   r: string;
@@ -320,6 +386,8 @@ export interface CalibratedStudioVisual {
   maskShape?: StudioMacroMaskShape;
   filter?: string;
   seamless?: boolean;
+  aspectScaleX?: number;
+  aspectScaleY?: number;
   palette: DiamondOpticalPalette;
   label: string;
 }
@@ -406,7 +474,7 @@ const FANCY_BASE_PALETTES: Record<
 > = {
   yellow: { lightHex: '#FFF6B8', primaryHex: '#F5C836', deepHex: '#C68A0A' },
   pink: { lightHex: '#FFD6E6', primaryHex: '#EC7AA8', deepHex: '#B93C73' },
-  blue: { lightHex: '#CFE4FF', primaryHex: '#4E8AE6', deepHex: '#1D4FA8' },
+  blue: { lightHex: '#DCF0FA', primaryHex: '#7DC0E2', deepHex: '#3B82AD' },
   green: { lightHex: '#CCF7E2', primaryHex: '#3AC284', deepHex: '#117A4B' },
   chameleon: { lightHex: '#E0EFC7', primaryHex: '#7A9E47', deepHex: '#476524' },
   brown: { lightHex: '#E8C8AA', primaryHex: '#9C5E2E', deepHex: '#592E12' },
@@ -461,12 +529,12 @@ const FANCY_PHYSICAL_LUTS: Record<FancyColorKey, SixStopLut> = {
     [1.0, 0.99, 0.95],
   ],
   blue: [
-    [0.06, 0.14, 0.27],
-    [0.24, 0.34, 0.47],
-    [0.42, 0.54, 0.67],
-    [0.62, 0.73, 0.84],
-    [0.84, 0.91, 0.96],
-    [0.98, 0.99, 1.0],
+    [0.08, 0.16, 0.22],
+    [0.26, 0.4, 0.49],
+    [0.48, 0.64, 0.74],
+    [0.69, 0.82, 0.89],
+    [0.87, 0.94, 0.97],
+    [0.99, 1.0, 1.0],
   ],
   green: [
     [0.07, 0.18, 0.09],
@@ -805,16 +873,18 @@ function getMacroShapeForDiamond(
     case 'Rose Cut':
       return { maskShape: 'rose_cut', whiteMacroSrc: STUDIO_GEM_PHOTOS.rose_cut_white };
     case 'Oval':
-    case 'Moval':
       return { maskShape: 'oval', whiteMacroSrc: STUDIO_GEM_PHOTOS.oval_white };
+    case 'Moval':
+      return { maskShape: 'moval', whiteMacroSrc: STUDIO_GEM_PHOTOS.moval_white };
     case 'Emerald':
       return { maskShape: 'emerald', whiteMacroSrc: STUDIO_GEM_PHOTOS.emerald_white };
     case 'Princess':
       return { maskShape: 'princess', whiteMacroSrc: STUDIO_GEM_PHOTOS.princess_white };
     case 'Cushion':
+      return { maskShape: 'cushion', whiteMacroSrc: STUDIO_GEM_PHOTOS.cushion_white };
     case 'Antique Cushion':
     case 'Old Mine':
-      return { maskShape: 'cushion', whiteMacroSrc: STUDIO_GEM_PHOTOS.cushion_white };
+      return { maskShape: 'old_mine', whiteMacroSrc: STUDIO_GEM_PHOTOS.old_mine_white };
     case 'Pear':
       return { maskShape: 'pear', whiteMacroSrc: STUDIO_GEM_PHOTOS.pear_white };
     case 'Radiant':
@@ -851,6 +921,58 @@ function getMacroShapeForDiamond(
     default:
       return null;
   }
+}
+
+const NATURAL_MASTER_LW: Partial<Record<Diamond['shape'], { lw: number; horizontal?: boolean }>> = {
+  Oval: { lw: 1.40 },
+  Moval: { lw: 1.85 },
+  Emerald: { lw: 1.32 },
+  Cushion: { lw: 1.05 },
+  'Old Mine': { lw: 1.06 },
+  'Antique Cushion': { lw: 1.06 },
+  Pear: { lw: 1.50 },
+  Radiant: { lw: 1.24 },
+  Marquise: { lw: 1.92 },
+  Baguette: { lw: 1.68 },
+  Hexagon: { lw: 1.48 },
+  Lozenge: { lw: 1.54 },
+  Kite: { lw: 1.42 },
+  Shield: { lw: 1.24 },
+  'Half Moon': { lw: 1.64, horizontal: true },
+  Trapezoid: { lw: 1.18 },
+};
+
+/**
+ * Computes subtle, optically natural aspect-ratio scaling so elongated vs square
+ * cushions, radiants, emeralds, ovals, pears, and half moons reflect their real mm L:W
+ * proportions without distorting facet geometry. Quantized to 0.04 steps for fast caching.
+ */
+function computeShapeAspectScale(
+  shape: Diamond['shape'],
+  lwRatio?: number
+): { aspectScaleX: number; aspectScaleY: number } {
+  const ref = NATURAL_MASTER_LW[shape];
+  if (!ref || !lwRatio || !Number.isFinite(lwRatio) || lwRatio < 0.7 || lwRatio > 3.5) {
+    return { aspectScaleX: 1, aspectScaleY: 1 };
+  }
+  const rel = Math.max(0.76, Math.min(1.30, lwRatio / ref.lw));
+  if (Math.abs(rel - 1) < 0.06) {
+    return { aspectScaleX: 1, aspectScaleY: 1 };
+  }
+  const root = Math.sqrt(rel);
+  const quantize = (v: number) =>
+    Math.round(Math.max(0.88, Math.min(1.13, v)) * 25) / 25;
+
+  if (ref.horizontal) {
+    return {
+      aspectScaleX: quantize(root),
+      aspectScaleY: quantize(1 / root),
+    };
+  }
+  return {
+    aspectScaleX: quantize(1 / root),
+    aspectScaleY: quantize(root),
+  };
 }
 
 function resolveRoundStudioColorPhoto(
@@ -1183,6 +1305,10 @@ export function getCalibratedStudioVisual(diamond: Diamond): CalibratedStudioVis
   const shapeLabel = SHAPE_SHORT_RU[diamond.shape] || diamond.shape;
   const palette = getDiamondOpticalPalette(diamond);
   const macroMatch = getMacroShapeForDiamond(diamond.shape);
+  const { aspectScaleX, aspectScaleY } = computeShapeAspectScale(
+    diamond.shape,
+    diamond.lwRatio
+  );
 
   if (!isFancy) {
     const label = `Студийное фото · ${shapeLabel} · ${diamond.color}`;
@@ -1193,7 +1319,10 @@ export function getCalibratedStudioVisual(diamond: Diamond): CalibratedStudioVis
         return {
           mode: 'native-photo',
           src: macroMatch.whiteMacroSrc,
+          maskShape: macroMatch.maskShape,
           seamless: true,
+          aspectScaleX,
+          aspectScaleY,
           palette,
           label,
         };
@@ -1203,6 +1332,8 @@ export function getCalibratedStudioVisual(diamond: Diamond): CalibratedStudioVis
         src: macroMatch.whiteMacroSrc,
         maskShape: macroMatch.maskShape,
         seamless: true,
+        aspectScaleX,
+        aspectScaleY,
         palette,
         label,
       };
@@ -1230,24 +1361,46 @@ export function getCalibratedStudioVisual(diamond: Diamond): CalibratedStudioVis
     return {
       mode: 'native-photo',
       src: resolved.src,
+      maskShape: 'round',
       filter: resolved.filter,
       seamless: true,
+      aspectScaleX: 1,
+      aspectScaleY: 1,
       palette,
       label,
     };
   }
 
-  // For ALL other 25 shapes (Oval, Emerald, Princess, Cushion, Pear, Radiant, Marquise,
-  // Heart, Asscher, Rose Cut, Baguette, Trilliant, Shield, Kite, Hexagon, Lozenge,
-  // Half Moon, Trapezoid, Cadillac, Briolette, Cabochon & antique equivalents) ->
-  // unified bright-lightbox (#F1F2F4) colorless studio master + precision-fitted
-  // GIA optical color/intensity/overtone glaze strictly inside the real diamond girdle!
+  // Dedicated photorealistic studio master for Blue Half Moon diamonds (shape & Fancy Intense Blue
+  // icy glacier-sky color both calibrated directly to 1170-12B)
+  if (diamond.shape === 'Half Moon' && colorKey === 'blue') {
+    const overtoneText = `${diamond.fancyOvertone || ''} ${diamond.overtone || ''} ${parsed.fancyOvertone || ''} ${diamond.color || ''}`;
+    const resolved = resolveRoundStudioColorPhoto('blue', intensity, overtoneText);
+    return {
+      mode: 'native-photo',
+      src: STUDIO_GEM_PHOTOS.half_moon_blue,
+      maskShape: 'half_moon',
+      filter: resolved.filter,
+      seamless: true,
+      aspectScaleX,
+      aspectScaleY,
+      palette,
+      label,
+    };
+  }
+
+  // For ALL other 25 shapes (Oval, Moval, Emerald, Princess, Cushion, Old Mine, Antique Cushion,
+  // Pear, Radiant, Marquise, Heart, Asscher, Rose Cut, Baguette, Trilliant, Shield, Kite,
+  // Hexagon, Lozenge, Half Moon, Trapezoid, Cadillac, Briolette, Cabochon) ->
+  // unified bright-lightbox studio master + edge-aware GIA optical LUT strictly inside the girdle!
   if (macroMatch) {
     return {
       mode: 'tinted-macro',
       src: macroMatch.whiteMacroSrc,
       maskShape: macroMatch.maskShape,
       seamless: true,
+      aspectScaleX,
+      aspectScaleY,
       palette,
       label,
     };
